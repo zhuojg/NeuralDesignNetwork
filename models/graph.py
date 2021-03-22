@@ -20,11 +20,11 @@ class GraphTripleConv(tf.keras.Model):
         self.pooling = pooling
         net1_layers = [3 * input_dim, hidden_dim, 2 * hidden_dim + output_dim]
 
-        self.net1 = build_mlp(net1_layers, batch_norm=mlp_normalization)
+        self.net1 = build_mlp(net1_layers)
         # TODO: add init of net1
 
         net2_layers = [hidden_dim, hidden_dim, output_dim]
-        self.net2 = build_mlp(net2_layers, batch_norm=mlp_normalization)
+        self.net2 = build_mlp(net2_layers)
         # TODO: add init of net2
 
     def call(self, obj_vecs, pred_vecs, edges, training=True):

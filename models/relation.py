@@ -19,7 +19,7 @@ class NDNRelation(keras.Model):
             ]
         )
 
-    def call(self, obj_vecs, pred_gt_vecs, s_idx, o_idx, training=True):
+    def call(self, obj_vecs, pred_gt_vecs, s_idx, o_idx, pred_vecs=None, training=True):
         """[summary]
 
         Args:
@@ -31,7 +31,7 @@ class NDNRelation(keras.Model):
         """
         # TODO: random mask some triples to generate training data
         if training:
-            pred_vecs = pred_gt_vecs
+            assert pred_vecs is not None
         else:
             pred_vecs = pred_gt_vecs
 
@@ -47,8 +47,8 @@ class NDNRelation(keras.Model):
             # if not training
             # z should be sampled from N(0, 1)
             normal_0_1 = tfp.distributions.Normal(loc=0., scale=1.)
-            obj_vecs_with_gt = normal_0_1.sample(shape=(obj_vecs.shape[0], 32))
-            pred_vecs_with_gt = normal_0_1.sample(shape=(pred_vecs.shape[0], 32))
+            obj_vecs_with_gt = normal_0_1.sample(sample_shape=(obj_vecs.shape[0], 32))
+            pred_vecs_with_gt = normal_0_1.sample(sample_shape=(pred_vecs.shape[0], 32))
 
         # concat
         new_obj_vecs = tf.concat([obj_vecs, obj_vecs_with_gt], axis=-1) # (O, 160)
@@ -59,6 +59,7 @@ class NDNRelation(keras.Model):
 
         # predicted class of every edge
         pred_cls = self.h_pred(new_pred_vecs, training=training) # (T, len(realtion_list) )
+        pred_cls = tf.keras.layers.Softmax()(pred_cls)
 
         new_p = tf.math.argmax(pred_cls, axis=-1)
 

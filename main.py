@@ -25,7 +25,7 @@ config_parser = configparser.ConfigParser()
 config_parser.read('config.ini')
 config = config_parser['NDN']
 
-category_list = ['']
+category_list = ['image', 'text', 'background', 'header', 'text over image', 'header over image']
 pos_relation_list = ['surrounding', 'inside', 'left of', 'above', 'right of', 'below', 'unknown']
 size_relation_list = ['bigger', 'smaller', 'same', 'unknown']
 
@@ -34,14 +34,14 @@ if __name__ == '__main__':
     current_time = datetime.datetime.now().strftime('%Y%m%d-%H%M%S')
 
     if args.train:
+        checkpoint_dir = os.path.join(config['checkpoint_dir'], current_time)
+        sample_dir = os.path.join(config['sample_dir'], current_time)
+        train_sample_dir = os.path.join(sample_dir, 'train')
+        test_sample_dir = os.path.join(sample_dir, 'test')
+
+        log_dir = os.path.join(config['log_dir'], current_time)
+        
         if args.save:
-            checkpoint_dir = os.path.join(config['checkpoint_dir'], current_time)
-            sample_dir = os.path.join(config['sample_dir'], current_time)
-            train_sample_dir = os.path.join(sample_dir, 'train')
-            test_sample_dir = os.path.join(sample_dir, 'test')
-
-            log_dir = os.path.join(config['log_dir'], current_time)
-
             if not os.path.exists(checkpoint_dir):
                 os.makedirs(checkpoint_dir)
 
@@ -53,17 +53,19 @@ if __name__ == '__main__':
                 os.makedirs(log_dir)
         
         training_config = {
-            'checkpoint_dir': config['checkpoint_dir'],
+            'checkpoint_dir': checkpoint_dir,
             'data_dir': config['data_dir'],
             'test_data_dir': config['test_data_dir'],
-            'log_dir': config['log_dir'],
+            'log_dir': log_dir,
+            'batch_size': config.getint('batch_size'),
             'learning_rate': config.getfloat('learning_rate'),
             'beta_1': config.getfloat('beta_1'),
             'beta_2': config.getfloat('beta_2'),
             'lambda_cls': config.getfloat('lambda_cls'),
             'lambda_kl_2': config.getfloat('lambda_kl_2'),
-            'max_iteration_number': config.getfloat('max_iteration_number'),
+            'max_iteration_number': int(config.getfloat('max_iteration_number')),
             'checkpoint_every': int(config.getfloat('checkpoint_every')), 
+            'checkpoint_max_to_keep': config.getint('checkpoint_max_to_keep')
         }
         
         model = NeuralDesignNetwork(

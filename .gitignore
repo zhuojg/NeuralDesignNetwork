@@ -138,7 +138,9 @@ dmypy.json
 cython_debug/
 
 # Project folder
+.vscode/
 data/
 ckpt/
 output/
 test/
+logs/

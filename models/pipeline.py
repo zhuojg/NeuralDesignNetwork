@@ -11,6 +11,7 @@ from models.refinement import NDNRefinement
 import os
 import json
 import math
+import random
 
 
 class NeuralDesignNetwork:
@@ -32,7 +33,7 @@ class NeuralDesignNetwork:
 
         self.vocab['object_name_to_idx']['__image__'] = 0
         self.vocab['pos_pred_name_to_idx']['__in_image__'] = 0
-        self.vocab['size_pred_name_to_idx']['__in_image'] = 0
+        self.vocab['size_pred_name_to_idx']['__in_image__'] = 0
 
         for idx, item in enumerate(category_list):
             self.vocab['object_name_to_idx'][item] = idx + 1
@@ -51,10 +52,9 @@ class NeuralDesignNetwork:
         self.refinement = NDNRefinement()
 
         # TODO: check the dimension
-        self.obj_embedding = keras.layers.Embedding(input_dim=len(category_list), output_dim=64)
-        self.pos_pred_embedding = keras.layers.Embedding(input_dim=len(pos_relation_list), output_dim=64)
-        self.size_pred_embedding = keras.layers.Embedding(input_dim=len(size_relation_list), output_dim=64)
-
+        self.obj_embedding = keras.layers.Embedding(input_dim=len(self.vocab['object_name_to_idx']), output_dim=128)
+        self.pos_pred_embedding = keras.layers.Embedding(input_dim=len(self.vocab['pos_pred_name_to_idx']), output_dim=128)
+        self.size_pred_embedding = keras.layers.Embedding(input_dim=len(self.vocab['size_pred_name_to_idx']), output_dim=128)
         # define optimizer
         self.relation_optimizer = keras.optimizers.Adam(learning_rate=config['learning_rate'], beta_1=config['beta_1'], beta_2=config['beta_2'])
         self.generation_optimizer = keras.optimizers.Adam(learning_rate=config['learning_rate'], beta_1=config['beta_1'], beta_2=config['beta_2'])
@@ -85,7 +85,10 @@ class NeuralDesignNetwork:
             pos_triples ():
             size_triples ():
         """
-        batch_json = dataset.take(1)
+        batch_json = dataset.take(1).as_numpy_iterator()
+
+        for item in batch_json:
+            batch_data = item
 
         '''
         combine the objects in one batch into a big graph
@@ -101,8 +104,8 @@ class NeuralDesignNetwork:
         all_pos_triples = []
         all_size_triples = []
 
-        for item in batch_json:
-            layout = json.load(open(item.numpy()))
+        for item in batch_data:
+            layout = json.load(open(item))
             cur_obj = []
             cur_boxes = []
             for category in layout.keys():
@@ -127,7 +130,7 @@ class NeuralDesignNetwork:
                 obj_centers.append([(x0 + x1) / 2, (y0 + y1) / 2])
 
             # calculate triples
-            whole_image_idx = self.vocab['object_name_to_index']['__image__']
+            whole_image_idx = self.vocab['object_name_to_idx']['__image__']
             for obj_index, obj in enumerate(cur_obj):
                 if obj == whole_image_idx:
                     continue
@@ -186,14 +189,14 @@ class NeuralDesignNetwork:
                     all_size_triples.append([s + obj_offset, p, o + obj_offset])
 
             # add __in_image__ triples
-            O = len(cur_obj) * (len(cur_obj) - 1) # we add edge for every pair in graph
+            O = len(cur_obj)
             pos_in_image = self.vocab['pos_pred_name_to_idx']['__in_image__']
             size_in_image = self.vocab['size_pred_name_to_idx']['__in_image__']
             for i in range(O - 1):
                 all_pos_triples.append([i + obj_offset, pos_in_image, O - 1 + obj_offset])
                 all_size_triples.append([i + obj_offset, size_in_image, O - 1 + obj_offset])
 
-            obj_offset += O
+            obj_offset += len(cur_obj)
         
         all_obj = tf.convert_to_tensor(all_obj)
         all_boxes = tf.convert_to_tensor(all_boxes)
@@ -215,7 +218,9 @@ class NeuralDesignNetwork:
         size_relation_acc = keras.metrics.CategoricalAccuracy()
 
         train_dataset = tf.data.Dataset.list_files(os.path.join(config['data_dir'], '*.json'))
+        train_dataset = train_dataset.repeat().shuffle(buffer_size=100).batch(batch_size=config['batch_size'])
         test_dataset = tf.data.Dataset.list_files(os.path.join(config['test_data_dir'], '*.json'))
+        test_dataset = test_dataset.repeat().shuffle(buffer_size=100).batch(batch_size=config['batch_size'])
         
         # define loss
         def relation_loss(pred_cls_gt, pred_cls_predicted, z):
@@ -231,7 +236,7 @@ class NeuralDesignNetwork:
             # then calculate discrete KL divergence
             # i'm not sure if this is correct
             normal_0_1 = tfp.distributions.Normal(loc=0., scale=1.)
-            sample_from_normal_0_1 = normal_0_1.sample(shape=(z.shape))
+            sample_from_normal_0_1 = normal_0_1.sample(sample_shape=(z.shape))
             KL_loss = keras.losses.KLDivergence()(sample_from_normal_0_1 ,z)
 
             return config['lambda_cls'] * cls_loss + config['lambda_kl_2'] * KL_loss
@@ -256,13 +261,28 @@ class NeuralDesignNetwork:
             s, pos_pred_gt, o = self.split_graph(objs, pos_triples_gt)
             _, size_pred_gt, _ = self.split_graph(objs, size_triples_gt)
 
+            # randomly mask to generate training data
+            pos_pred = pos_pred_gt.numpy()
+            for item, idx in enumerate(pos_pred):
+                if random.random() <= 0.2:
+                    pos_pred[idx] = len(self.vocab['pos_pred_name_to_idx']) - 1
+
+            size_pred = size_pred_gt.numpy()
+            for item, idx in enumerate(size_pred):
+                if random.random() <= 0.2:
+                    size_pred[idx] = len(self.vocab['size_pred_name_to_idx']) - 1
+
+            pos_pred = tf.convert_to_tensor(pos_pred)
+            size_pred = tf.convert_to_tensor(size_pred)
+
             # train pos relation
             with tf.GradientTape(persistent=True) as tape:
                 # get embedding of obj and pred
                 obj_vecs = self.obj_embedding(objs)
+                pred_vecs = self.pos_pred_embedding(pos_pred)
                 pred_gt_vecs = self.pos_pred_embedding(pos_pred_gt)
 
-                result = self.pos_relation(obj_vecs, pred_gt_vecs, s, o, training=True)
+                result = self.pos_relation(obj_vecs, pred_gt_vecs, s, o, pred_vecs=pred_vecs, training=True)
 
                 # embedding pred with one_hot, to calculate cross entropy loss
                 pred_gt_one_hot = tf.one_hot(pos_pred_gt, depth=len(self.pos_relation_list))
@@ -270,6 +290,9 @@ class NeuralDesignNetwork:
                 # get latent variable of G_gt
                 z = tf.concat([result['obj_vecs_with_gt'], result['pred_vecs_with_gt']], axis=0)
                 pos_loss = relation_loss(pred_gt_one_hot, result['pred_cls'], z)
+
+            # print(self.pos_relation.trainable_variables)
+            # exit(0)
 
             train_var = self.pos_relation.trainable_variables \
                         + self.obj_embedding.trainable_variables + self.pos_pred_embedding.trainable_variables
@@ -286,9 +309,10 @@ class NeuralDesignNetwork:
                 # use the same obj embedding here
                 # but when to update the weight of obj embedding is not sure
                 obj_vecs = self.obj_embedding(objs)
+                pred_vecs = self.size_pred_embedding(size_pred)
                 pred_gt_vecs = self.size_pred_embedding(size_pred_gt)
 
-                result = self.size_relation(obj_vecs, pred_gt_vecs, s, o, training=True)
+                result = self.size_relation(obj_vecs, pred_gt_vecs, s, o, pred_vecs=pred_vecs, training=True)
 
                 pred_gt_one_hot = tf.one_hot(size_pred_gt, depth=len(self.size_relation_list))
 
@@ -329,20 +353,22 @@ class NeuralDesignNetwork:
             _, size_pred_gt, _ = self.split_graph(objs, size_triples_gt)
             obj_vecs = self.obj_embedding(objs)
             
-            # TODO: need to convert every edge to unknown
+            # convert every edge to unknown
+            pos_pred = tf.ones_like(pos_pred_gt) * (len(self.vocab['pos_pred_name_to_idx']) - 1)
+            size_pred = tf.ones_like(size_pred_gt) * (len(self.vocab['size_pred_name_to_idx']) - 1)
 
             # test position relation classification
-            pred_gt_vecs = self.pos_pred_embedding(pos_pred_gt)
-            result = self.pos_relation(obj_vecs, pred_gt_vecs, s, o, training=False)
+            pred_vecs = self.pos_pred_embedding(pos_pred)
+            result = self.pos_relation(obj_vecs, pred_vecs, s, o, training=False)
 
-            pred_gt_one_hot = tf.one_hot(pos_pred_gt, depth=self.pos_relation_list)
+            pred_gt_one_hot = tf.one_hot(pos_pred_gt, depth=len(self.pos_relation_list))
             z = tf.concat([result['obj_vecs_with_gt'], result['pred_vecs_with_gt']], axis=0)
             pos_loss = relation_loss(pred_gt_one_hot, result['pred_cls'], z)
             pos_relation_acc.update_state(pred_gt_one_hot, result['pred_cls'])
 
             # test size relation classification
-            pred_gt_vecs = self.size_pred_embedding(size_pred_gt)
-            result = self.size_relation(obj_vecs, pred_gt_vecs, s, o, training=False)
+            pred_vecs = self.size_pred_embedding(size_pred)
+            result = self.size_relation(obj_vecs, pred_vecs, s, o, training=False)
 
             pred_gt_one_hot = tf.one_hot(size_pred_gt, depth=len(self.size_relation_list))
             z = tf.concat([result['obj_vecs_with_gt'], result['pred_vecs_with_gt']], axis=0)
@@ -353,11 +379,13 @@ class NeuralDesignNetwork:
                 with test_summary_writer.as_default():
                     tf.summary.scalar('pos_loss', pos_loss, step=iter_cnt)
                     tf.summary.scalar('size_loss', pos_loss, step=iter_cnt)
-                    tf.summary.scalar('pos_relation_acc', pos_relation_acc, step=iter_cnt)
-                    tf.summary.scalar('size_relation_acc', size_relation_acc, step=iter_cnt)
+                    tf.summary.scalar('pos_relation_acc', pos_relation_acc.result(), step=iter_cnt)
+                    tf.summary.scalar('size_relation_acc', size_relation_acc.result(), step=iter_cnt)
                 
             pos_relation_acc.reset_states()
             size_relation_acc.reset_states()
+
+            iter_cnt += 1
             
     def train_generation(self):
         pass
