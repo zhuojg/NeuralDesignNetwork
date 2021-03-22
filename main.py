@@ -63,6 +63,7 @@ if __name__ == '__main__':
             'beta_2': config.getfloat('beta_2'),
             'lambda_cls': config.getfloat('lambda_cls'),
             'lambda_kl_2': config.getfloat('lambda_kl_2'),
+            'mask_rate': config.getfloat('mask_rate'),
             'max_iteration_number': int(config.getfloat('max_iteration_number')),
             'checkpoint_every': int(config.getfloat('checkpoint_every')), 
             'checkpoint_max_to_keep': config.getint('checkpoint_max_to_keep')

@@ -8,9 +8,10 @@ import tensorflow_probability as tfp
 class NDNRelation(keras.Model):
     def __init__(self, category_list, relation_list):
         super(NDNRelation, self).__init__()
-
-        self.g_c = GraphTripleConvStack([(128, 512, 128), (128, 512, 128), (128, 512, 128), (128, 128, 32)]) # not same as supplementary, but i think this is right
-        self.g_p = GraphTripleConvStack([(160, 512, 128), (128, 512, 128), (128, 512, 128), (128, 128, 128)])
+        # the dimension of g_c and g_p are not same as supplementary
+        # but i think this is right
+        self.g_c = GraphTripleConvStack([(64, 512, 128), (128, 512, 128), (128, 512, 128), (128, 128, 32)]) 
+        self.g_p = GraphTripleConvStack([(64 + 32, 512, 128), (128, 512, 128), (128, 512, 128), (128, 128, 128)])
         self.h_pred = build_mlp(
             dim_list=[
                 128, 
@@ -29,7 +30,6 @@ class NDNRelation(keras.Model):
         Returns:
             
         """
-        # TODO: random mask some triples to generate training data
         if training:
             assert pred_vecs is not None
         else:
@@ -50,7 +50,7 @@ class NDNRelation(keras.Model):
             obj_vecs_with_gt = normal_0_1.sample(sample_shape=(obj_vecs.shape[0], 32))
             pred_vecs_with_gt = normal_0_1.sample(sample_shape=(pred_vecs.shape[0], 32))
 
-        # concat
+        # concat 
         new_obj_vecs = tf.concat([obj_vecs, obj_vecs_with_gt], axis=-1) # (O, 160)
         new_pred_vecs = tf.concat([pred_vecs, pred_vecs_with_gt], axis=-1) # (T, 160)
 

@@ -51,10 +51,9 @@ class NeuralDesignNetwork:
         self.generation = NDNGeneration()
         self.refinement = NDNRefinement()
 
-        # TODO: check the dimension
-        self.obj_embedding = keras.layers.Embedding(input_dim=len(self.vocab['object_name_to_idx']), output_dim=128)
-        self.pos_pred_embedding = keras.layers.Embedding(input_dim=len(self.vocab['pos_pred_name_to_idx']), output_dim=128)
-        self.size_pred_embedding = keras.layers.Embedding(input_dim=len(self.vocab['size_pred_name_to_idx']), output_dim=128)
+        self.obj_embedding = keras.layers.Embedding(input_dim=len(self.vocab['object_name_to_idx']), output_dim=64)
+        self.pos_pred_embedding = keras.layers.Embedding(input_dim=len(self.vocab['pos_pred_name_to_idx']), output_dim=64)
+        self.size_pred_embedding = keras.layers.Embedding(input_dim=len(self.vocab['size_pred_name_to_idx']), output_dim=64)
         # define optimizer
         self.relation_optimizer = keras.optimizers.Adam(learning_rate=config['learning_rate'], beta_1=config['beta_1'], beta_2=config['beta_2'])
         self.generation_optimizer = keras.optimizers.Adam(learning_rate=config['learning_rate'], beta_1=config['beta_1'], beta_2=config['beta_2'])
@@ -264,12 +263,12 @@ class NeuralDesignNetwork:
             # randomly mask to generate training data
             pos_pred = pos_pred_gt.numpy()
             for item, idx in enumerate(pos_pred):
-                if random.random() <= 0.2:
+                if random.random() <= config['mask_rate']:
                     pos_pred[idx] = len(self.vocab['pos_pred_name_to_idx']) - 1
 
             size_pred = size_pred_gt.numpy()
             for item, idx in enumerate(size_pred):
-                if random.random() <= 0.2:
+                if random.random() <= config['mask_rate']:
                     size_pred[idx] = len(self.vocab['size_pred_name_to_idx']) - 1
 
             pos_pred = tf.convert_to_tensor(pos_pred)
