@@ -45,8 +45,8 @@ class NeuralDesignNetwork:
             self.vocab['size_pred_name_to_idx'][item] = idx + 1
 
         # build GCN as described in supplementary material
-        self.pos_relation = NDNRelation(category_list=category_list, relation_list=pos_relation_list)
-        self.size_relation = NDNRelation(category_list=category_list, relation_list=size_relation_list)
+        self.pos_relation = NDNRelation(category_list=self.vocab['object_name_to_idx'].keys(), relation_list=self.vocab['pos_pred_name_to_idx'].keys())
+        self.size_relation = NDNRelation(category_list=self.vocab['object_name_to_idx'].keys(), relation_list=self.vocab['size_pred_name_to_idx'])
 
         self.generation = NDNGeneration()
         self.refinement = NDNRefinement()
@@ -96,6 +96,9 @@ class NeuralDesignNetwork:
         all_obj = []
         all_boxes = []
 
+        layout_height = 64.
+        layout_width = 64.
+
         # triple: [s, p, o]
         # s: index in all_obj
         # p: index of relationship
@@ -113,6 +116,10 @@ class NeuralDesignNetwork:
                     cur_obj.append(all_obj[-1])
 
                     x0, y0, x1, y1 = obj
+                    x0 /= layout_width
+                    y0 /= layout_height
+                    x1 /= layout_width
+                    y1 /= layout_height
                     all_boxes.append(tf.convert_to_tensor([x0, y0, x1, y1], dtype=tf.float32))
                     cur_boxes.append(all_boxes[-1])
             
@@ -284,7 +291,7 @@ class NeuralDesignNetwork:
                 result = self.pos_relation(obj_vecs, pred_gt_vecs, s, o, pred_vecs=pred_vecs, training=True)
 
                 # embedding pred with one_hot, to calculate cross entropy loss
-                pred_gt_one_hot = tf.one_hot(pos_pred_gt, depth=len(self.pos_relation_list))
+                pred_gt_one_hot = tf.one_hot(pos_pred_gt, depth=len(self.vocab['pos_pred_name_to_idx']))
                 
                 # get latent variable of G_gt
                 z = tf.concat([result['obj_vecs_with_gt'], result['pred_vecs_with_gt']], axis=0)
@@ -313,7 +320,7 @@ class NeuralDesignNetwork:
 
                 result = self.size_relation(obj_vecs, pred_gt_vecs, s, o, pred_vecs=pred_vecs, training=True)
 
-                pred_gt_one_hot = tf.one_hot(size_pred_gt, depth=len(self.size_relation_list))
+                pred_gt_one_hot = tf.one_hot(size_pred_gt, depth=len(self.vocab['size_pred_name_to_idx']))
 
                 z = tf.concat([result['obj_vecs_with_gt'], result['pred_vecs_with_gt']], axis=0)
                 size_loss = relation_loss(pred_gt_one_hot, result['pred_cls'], z)
@@ -360,7 +367,7 @@ class NeuralDesignNetwork:
             pred_vecs = self.pos_pred_embedding(pos_pred)
             result = self.pos_relation(obj_vecs, pred_vecs, s, o, training=False)
 
-            pred_gt_one_hot = tf.one_hot(pos_pred_gt, depth=len(self.pos_relation_list))
+            pred_gt_one_hot = tf.one_hot(pos_pred_gt, depth=len(self.vocab['pos_pred_name_to_idx']))
             z = tf.concat([result['obj_vecs_with_gt'], result['pred_vecs_with_gt']], axis=0)
             pos_loss = relation_loss(pred_gt_one_hot, result['pred_cls'], z)
             pos_relation_acc.update_state(pred_gt_one_hot, result['pred_cls'])
@@ -369,7 +376,7 @@ class NeuralDesignNetwork:
             pred_vecs = self.size_pred_embedding(size_pred)
             result = self.size_relation(obj_vecs, pred_vecs, s, o, training=False)
 
-            pred_gt_one_hot = tf.one_hot(size_pred_gt, depth=len(self.size_relation_list))
+            pred_gt_one_hot = tf.one_hot(size_pred_gt, depth=len(self.vocab['size_pred_name_to_idx']))
             z = tf.concat([result['obj_vecs_with_gt'], result['pred_vecs_with_gt']], axis=0)
             size_loss = relation_loss(pred_gt_one_hot, result['pred_cls'], z)
             size_relation_acc.update_state(pred_gt_one_hot, result['pred_cls'])
@@ -386,8 +393,47 @@ class NeuralDesignNetwork:
 
             iter_cnt += 1
             
-    def train_generation(self):
-        pass
+    def train_generation(self, config):
+        iter_cnt = 0
+        
+        train_dataset = tf.data.Dataset.list_files(os.path.join(config['data_dir'], '*.json'))
+        train_dataset = train_dataset.repeat().shuffle(buffer_size=100).batch(batch_size=config['batch_size'])
+        test_dataset = tf.data.Dataset.list_files(os.path.join(config['test_data_dir'], '*.json'))
+        test_dataset = test_dataset.repeat().shuffle(buffer_size=100).batch(batch_size=config['batch_size'])
+        
+        # define loss
+        def generation_loss():
+            pass
+
+        if self.save:
+            ckpt_manager = tf.train.CheckpointManager(
+                self.ckpt, 
+                config['checkpoint_dir'], 
+                max_to_keep=config['checkpoint_max_to_keep']
+            )
+        
+            # init tensorboard writer
+            train_log_dir = os.path.join(config['log_dir'], 'train')
+            test_log_dir = os.path.join(config['log_dir'], 'test')
+            train_summary_writer = tf.summary.create_file_writer(train_log_dir)
+            test_summary_writer = tf.summary.create_file_writer(test_log_dir)
+
+        # start training
+        while iter_cnt < config['max_iteration_number']:
+            objs, _, pos_triples, size_triples = self.fetch_one_data(dataset=train_dataset)
+
+            s, pos_pred, o = self.split_graph(objs, pos_triples)
+            _, size_pred, _ = self.split_graph(objs, size_triples)
+
+            with tf.GradientTape(persistent=True) as tape:
+                obj_vecs = self.obj_embedding(objs)
+                pos_pred_vecs = self.pos_pred_embedding(pos_pred)
+                size_pred_vecs = self.size_pred_embedding(size_pred)
+
+                result = self.generation(obj_vecs, pos_pred_vecs, size_pred_vecs, s, o, training=True)
+
+
+
 
     def split_graph(self, objs, triples):
         O = objs.shape[0]
