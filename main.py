@@ -34,6 +34,12 @@ size_relation_list = ['bigger', 'smaller', 'same', 'unknown']
 
 if __name__ == '__main__':
     current_time = datetime.datetime.now().strftime('%Y%m%d-%H%M%S')
+    model_config = {
+        
+        'learning_rate': config.getfloat('learning_rate'),
+        'beta_1': config.getfloat('beta_1'),
+        'beta_2': config.getfloat('beta_2'),
+    }
 
     if args.train:
         checkpoint_dir = os.path.join(config['checkpoint_dir'], current_time)
@@ -56,13 +62,10 @@ if __name__ == '__main__':
         
         training_config = {
             'checkpoint_dir': checkpoint_dir,
-            'data_dir': config['data_dir'],
-            'test_data_dir': config['test_data_dir'],
             'log_dir': log_dir,
             'batch_size': config.getint('batch_size'),
-            'learning_rate': config.getfloat('learning_rate'),
-            'beta_1': config.getfloat('beta_1'),
-            'beta_2': config.getfloat('beta_2'),
+            'data_dir': config['data_dir'],
+            'test_data_dir': config['test_data_dir'],
             'lambda_cls': config.getfloat('lambda_cls'),
             'lambda_kl_2': config.getfloat('lambda_kl_2'),
             'mask_rate': config.getfloat('mask_rate'),
@@ -75,7 +78,7 @@ if __name__ == '__main__':
             category_list=category_list, 
             pos_relation_list=pos_relation_list,
             size_relation_list=size_relation_list,
-            config=training_config,
+            config=training_config.update(model_config),
             save=args.save, 
             training=True)
 
@@ -100,10 +103,10 @@ if __name__ == '__main__':
             category_list=category_list,
             pos_relation_list=pos_relation_list,
             size_relation_list=size_relation_list,
-            config={},
+            config=model_config,
             save=args.save, 
             training=False
         )
 
         model.ckpt.restore(args.checkpoint_path)
-        model.test_relation(config={})
+        model.test_relation(config=model_config)
