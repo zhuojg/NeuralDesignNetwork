@@ -106,9 +106,14 @@ class NeuralDesignNetwork:
         recon_loss = tf.keras.losses.MeanAbsoluteError()(bb_gt, bb_predicted)
 
         # KL loss can be calculated according to mu and var
+        mu = tf.concat(mu, axis=0)
+        var = tf.concat(var, axis=0)
+        mu_prior = tf.concat(mu_prior, axis=0)
+        var_prior = tf.concat(var_prior, axis=0)
         sigma = tf.math.exp(0.5 * var)
         sigma_prior = tf.math.exp(0.5 * var_prior)
         KL_loss = tf.math.log(sigma_prior / sigma + 1e-8) + (tf.math.pow(sigma, 2) + tf.math.pow(mu - mu_prior, 2)) / (2 * tf.math.pow(sigma_prior, 2)) - 1./2
+        KL_loss = tf.math.reduce_mean(KL_loss)
 
         return self.config['lambda_recon'] * recon_loss + self.config['lambda_kl_1'] * KL_loss
 
@@ -169,7 +174,9 @@ class NeuralDesignNetwork:
                     y0 /= layout_height
                     x1 /= layout_width
                     y1 /= layout_height
-                    all_boxes.append(tf.convert_to_tensor([x0, y0, x1, y1], dtype=tf.float32))
+                    w = x1 - x0
+                    h = y1 - y0
+                    all_boxes.append(tf.convert_to_tensor([x0, y0, w, h], dtype=tf.float32))
                     cur_boxes.append(all_boxes[-1])
             
             # at the end of one layout add __image__ item
@@ -267,7 +274,7 @@ class NeuralDesignNetwork:
         test_dataset = tf.data.Dataset.list_files(os.path.join(config['test_data_dir'], '*.json'))
         test_dataset = test_dataset.repeat().shuffle(buffer_size=100).batch(batch_size=config['batch_size'])
         sample_dataset = tf.data.Dataset.list_files(os.path.join(config['test_data_dir'], '*.json'))
-        sample_dataset = test_dataset.repeat().shuffle(buffer_size=100).batch(batch_size=config['batch_size'])
+        sample_dataset = sample_dataset.repeat().shuffle(buffer_size=100).batch(batch_size=1)
         
         if self.save:
             ckpt_manager = tf.train.CheckpointManager(
@@ -291,7 +298,7 @@ class NeuralDesignNetwork:
         while self.iter_cnt < config['max_iteration_number']:
             objs, boxes, pos_triples_gt, size_triples_gt = self.fetch_one_data(dataset=train_dataset)
 
-            result = self.run_step(objs, boxes, pos_triples_gt, size_triples_gt, training=True)
+            result = self.run_step(config, objs, boxes, pos_triples_gt, size_triples_gt, training=True)
 
             pos_loss = result['pos_loss']
             size_loss = result['size_loss']
@@ -340,7 +347,7 @@ class NeuralDesignNetwork:
             """
             objs, boxes, pos_triples_gt, size_triples_gt = self.fetch_one_data(dataset=test_dataset)
 
-            result = self.run_step(objs, boxes, pos_triples_gt, size_triples_gt, training=False)
+            result = self.run_step(config, objs, boxes, pos_triples_gt, size_triples_gt, training=False)
             
             pred_boxes = result['pred_boxes']
             gt_pos_cls = result['gt_pos_cls']
@@ -369,10 +376,10 @@ class NeuralDesignNetwork:
             """
             start sampling
             """
-            for idx in range(10):
+            for idx in range(5):
                 objs, boxes, pos_triples_gt, size_triples_gt = self.fetch_one_data(dataset=sample_dataset)
 
-                result = self.run_step(objs, boxes, pos_triples_gt, size_triples_gt, training=False)
+                result = self.run_step(config, objs, boxes, pos_triples_gt, size_triples_gt, training=False)
                 
                 pred_boxes = result['pred_boxes']
                 gt_pos_cls = result['gt_pos_cls']
@@ -400,12 +407,12 @@ class NeuralDesignNetwork:
 
         # randomly mask to generate training data
         pos_pred = pos_pred_gt.numpy()
-        for item, idx in enumerate(pos_pred):
+        for idx, item in enumerate(pos_pred):
             if random.random() <= config['mask_rate']:
                 pos_pred[idx] = len(self.vocab['pos_pred_name_to_idx']) - 1
 
         size_pred = size_pred_gt.numpy()
-        for item, idx in enumerate(size_pred):
+        for idx, item in enumerate(size_pred):
             if random.random() <= config['mask_rate']:
                 size_pred[idx] = len(self.vocab['size_pred_name_to_idx']) - 1
 
@@ -478,7 +485,7 @@ class NeuralDesignNetwork:
             step_result['pred_pos_cls'] = result['pred_cls']
 
             pred_vecs = self.size_pred_embedding(size_pred)
-            result = self.pos_relation(obj_vecs, pred_vecs, s, o, training=False)
+            result = self.size_relation(obj_vecs, pred_vecs, s, o, training=False)
             pred_gt_one_hot = tf.one_hot(size_pred_gt, depth=len(self.vocab['size_pred_name_to_idx']))
             step_result['gt_size_cls'] = pred_gt_one_hot
             step_result['pred_size_cls'] = result['pred_cls']
@@ -523,8 +530,8 @@ class NeuralDesignNetwork:
         else:
             # when not traing
             # use the relationship predicted by previous model
-            pos_pred = tf.math.argmax(result['pred_pos_cls'], axis=1)
-            size_pred = tf.math.argmax(result['pred_size_cls'], axis=1)
+            pos_pred = tf.math.argmax(step_result['pred_pos_cls'], axis=1)
+            size_pred = tf.math.argmax(step_result['pred_size_cls'], axis=1)
 
             obj_vecs = self.obj_embedding(objs)
             pos_pred_vecs = self.pos_pred_embedding(pos_pred)
@@ -554,10 +561,10 @@ class NeuralDesignNetwork:
             temp_cls = obj_cls[idx]
             x, y, w, h = boxes[idx]
 
-            x0 = x
-            y0 = y
-            x1 = x + w
-            y1 = y + h
+            x0 = x * CANVA_SIZE
+            y0 = y * CANVA_SIZE
+            x1 = x + w * CANVA_SIZE
+            y1 = y + h * CANVA_SIZE
             
             draw.rectangle([x0, y0, x1, y1], outline=colormap[temp_cls])
 

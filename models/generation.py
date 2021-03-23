@@ -21,9 +21,8 @@ class NDNGeneration(keras.Model):
         g_update_input = tf.concat([g_update_f_input, g_update_b_input], axis=-1)
         g_update_hidden = keras.layers.Dense(128)(g_update_input)
         g_update_hidden = keras.layers.Dense(128)(g_update_hidden)
-        g_update_result = keras.layers.Average()(g_update_hidden)
         
-        self.g_update = keras.Model(inputs=[g_update_f_input, g_update_b_input], outputs=[g_update_result])
+        self.g_update = keras.Model(inputs=[g_update_f_input, g_update_b_input], outputs=[g_update_hidden])
 
         # build h_bb_encoder
         # h_bb_encoder take condition and bb_gt as input
@@ -84,16 +83,22 @@ class NDNGeneration(keras.Model):
         for k in range(O):
             temp_bb = previous_bb.copy()
             while len(temp_bb) < O:
-                temp_bb.append([0, 0, 0, 0])
+                temp_bb.append([0., 0., 0., 0.])
             
             c_k = self.g_update([new_obj_vecs, tf.convert_to_tensor(temp_bb)])
+            c_k = tf.reduce_mean(c_k, axis=0)
 
             if training:
-                z_mu, z_var = self.h_bb_enc([boxes[k], c_k])
+                temp_boxes = tf.expand_dims(boxes[k], axis=0)
+                c_k = tf.expand_dims(c_k, axis=0)
+                z_mu, z_var = self.h_bb_enc([temp_boxes, c_k])
                 result['mu'].append(z_mu)
                 result['var'].append(z_var)
                 z = self.reparameterize(z_mu, z_var)
-                bb_k_predicted = self.h_bb_dec([z, c_k])
+
+                z_c_k = tf.concat([z, c_k], axis=-1)
+                bb_k_predicted = self.h_bb_dec(z_c_k)
+                bb_k_predicted = tf.squeeze(bb_k_predicted, axis=0)
                 result['pred_boxes'].append(bb_k_predicted)
 
                 z_mu, z_var = self.prior_encoder(c_k)
@@ -101,7 +106,13 @@ class NDNGeneration(keras.Model):
                 result['var_prior'].append(z_var)
                 previous_bb.append(boxes[k])
             else:
-                bb_k_predicted = self.prior_encoder(c_k)
+                c_k = tf.expand_dims(c_k, axis=0)
+                # bb_k_predicted = self.prior_encoder(c_k)
+                z_mu, z_var = self.prior_encoder(c_k)
+                z = self.reparameterize(z_mu, z_var)
+                z_c_k = tf.concat([z, c_k], axis=-1)
+                bb_k_predicted = self.h_bb_dec(z_c_k)
+                bb_k_predicted = tf.squeeze(bb_k_predicted, axis=0)
                 result['pred_boxes'].append(bb_k_predicted)
                 previous_bb.append(bb_k_predicted)
 

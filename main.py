@@ -59,6 +59,8 @@ if __name__ == '__main__':
             'train_sample_dir': train_sample_dir,
             'batch_size': config.getint('batch_size'),
             'lambda_cls': config.getfloat('lambda_cls'),
+            'lambda_recon': config.getfloat('lambda_recon'),
+            'lambda_kl_1': config.getfloat('lambda_kl_1'),
             'lambda_kl_2': config.getfloat('lambda_kl_2'),
             'mask_rate': config.getfloat('mask_rate'),
             'max_iteration_number': int(config.getfloat('max_iteration_number')),
@@ -67,8 +69,6 @@ if __name__ == '__main__':
         }
 
         training_config = {**training_config, **model_config}
-
-        print(training_config)
         
         model = NeuralDesignNetwork(
             category_list=category_list, 
@@ -78,14 +78,7 @@ if __name__ == '__main__':
             save=args.save, 
             training=True)
 
-        if args.part == 'relation':
-            model.train_relation(config=training_config)
-        
-        if args.part == 'generation':
-            model.train_generation(config=training_config)
-
-        if args.part == 'refinement':
-            pass
+        model.run(training_config)
 
     if args.test:
         # assert args.checkpoint_path and args.output_dir
