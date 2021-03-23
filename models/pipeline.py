@@ -212,11 +212,35 @@ class NeuralDesignNetwork:
         return all_obj, all_boxes, all_pos_triples, all_size_triples
 
 
-    def test_relation(self, checkpoint_path, output_dir):
-        pass
+    def test_relation(self, config):
+        test_dataset = tf.data.Dataset.list_files(os.path.join(config['test_data_dir'], '*.json'))
+        test_dataset = test_dataset.repeat().shuffle(buffer_size=100).batch(1)
 
-    def train(self, config):
-        pass
+        acc = tf.keras.metrics.CategoricalAccuracy()
+
+        objs, _, pos_triples_gt, size_triples_gt = self.fetch_one_data(dataset=test_dataset)
+
+        s, pos_pred_gt, o = self.split_graph(objs, pos_triples_gt)
+        _, size_pred_gt, _ = self.split_graph(objs, size_triples_gt)
+
+        pos_pred = tf.ones_like(pos_pred_gt) * (len(self.vocab['pos_pred_name_to_idx']) - 1)
+        size_pred = tf.ones_like(size_pred_gt) * (len(self.vocab['size_pred_name_to_idx']) - 1)
+
+        obj_vecs = self.obj_embedding(objs)
+
+        pred_vecs = self.pos_pred_embedding(pos_pred)
+        result = self.pos_relation(obj_vecs, pred_vecs, s, o, training=False)
+        pred_gt_one_hot = tf.one_hot(pos_pred_gt, depth=len(self.vocab['pos_pred_name_to_idx']))
+        acc.update_state(pred_gt_one_hot, result['pred_cls'])
+        print('Position Acc: %f.' % acc.result().numpy())
+        acc.reset_states()
+
+        pred_vecs = self.size_pred_embedding(size_pred)
+        result = self.pos_relation(obj_vecs, pred_vecs, s, o, training=False)
+        pred_gt_one_hot = tf.one_hot(size_pred_gt, depth=len(self.vocab['size_pred_name_to_idx']))
+        acc.update_state(pred_gt_one_hot, result['pred_cls'])
+        print('Size Acc: %f.' % acc.result().numpy())
+        acc.reset_states()
 
     def train_relation(self, config):
         iter_cnt = 0
@@ -430,7 +454,12 @@ class NeuralDesignNetwork:
                 pos_pred_vecs = self.pos_pred_embedding(pos_pred)
                 size_pred_vecs = self.size_pred_embedding(size_pred)
 
-                result = self.generation(obj_vecs, pos_pred_vecs, size_pred_vecs, s, o, training=True)
+                # concat pos_pred and size_pred
+                pred_vecs = tf.concat([pos_pred_vecs, size_pred_vecs], axis=0)
+                s_idx = tf.concat([s, s], axis=0)
+                o_idx = tf.concat([o, o], axis=0)
+
+                result = self.generation(obj_vecs, pred_vecs, s_idx, o_idx, training=True)
 
 
 

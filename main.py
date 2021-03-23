@@ -9,6 +9,8 @@ import argparse
 import configparser
 import datetime
 
+from tensorflow.python.autograph.utils.ag_logging import _output_to_stdout
+
 from models.pipeline import NeuralDesignNetwork
 
 
@@ -86,10 +88,22 @@ if __name__ == '__main__':
         if args.part == 'refinement':
             pass
 
-    # if args.test:
-    #     assert args.checkpoint_path and args.output_dir
+    if args.test:
+        # assert args.checkpoint_path and args.output_dir
 
-    #     if not os.path.exists(args.output_dir):
-    #         os.makedirs(args.output_dir)
+        # if not os.path.exists(args.output_dir):
+        #     os.makedirs(args.output_dir)
+
+        assert args.checkpoint_path
         
-    #     model = NeuralDesignNetwork(save=args.save, training=False)
+        model = NeuralDesignNetwork(
+            category_list=category_list,
+            pos_relation_list=pos_relation_list,
+            size_relation_list=size_relation_list,
+            config={},
+            save=args.save, 
+            training=False
+        )
+
+        model.ckpt.restore(args.checkpoint_path)
+        model.test_relation(config={})
