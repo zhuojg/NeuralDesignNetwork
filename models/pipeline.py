@@ -1,3 +1,4 @@
+from uuid import NAMESPACE_X500
 from models.refinement import NDNRefinement
 import tensorflow as tf
 from tensorflow import keras
@@ -12,6 +13,7 @@ import os
 import json
 import math
 import random
+from PIL import Image, ImageDraw
 
 
 class NeuralDesignNetwork:
@@ -75,6 +77,50 @@ class NeuralDesignNetwork:
             generation_optimizer=self.generation_optimizer,
             refinement_optimizer=self.refinement_optimizer
         )
+
+        # define training parameters
+        self.iter_cnt = 0
+
+    
+    # define loss
+    def relation_loss(self, pred_cls_gt, pred_cls_predicted, z):
+        cls_loss = keras.losses.CategoricalCrossentropy()(pred_cls_gt, pred_cls_predicted)
+        
+        # TODO:
+        # this part is a little confusing
+        # according to paper, we need to calculate KL divergence of z and N(0, 1)
+        # where `z` is calculated from g_p(G)
+        # so we cannot get distribution of z
+
+        # here i try to sample some data from N(0, 1)
+        # then calculate discrete KL divergence
+        # i'm not sure if this is correct
+        normal_0_1 = tfp.distributions.Normal(loc=0., scale=1.)
+        sample_from_normal_0_1 = normal_0_1.sample(sample_shape=(z.shape))
+        KL_loss = keras.losses.KLDivergence()(sample_from_normal_0_1 ,z)
+
+        return self.config['lambda_cls'] * cls_loss + self.config['lambda_kl_2'] * KL_loss
+
+    def generation_loss(self, bb_gt, bb_predicted, mu, var, mu_prior, var_prior):
+        # reconstruction loss is L1 loss
+        recon_loss = tf.keras.losses.MeanAbsoluteError()(bb_gt, bb_predicted)
+
+        # KL loss can be calculated according to mu and var
+        sigma = tf.math.exp(0.5 * var)
+        sigma_prior = tf.math.exp(0.5 * var_prior)
+        KL_loss = tf.math.log(sigma_prior / sigma + 1e-8) + (tf.math.pow(sigma, 2) + tf.math.pow(mu - mu_prior, 2)) / (2 * tf.math.pow(sigma_prior, 2)) - 1./2
+
+        return self.config['lambda_recon'] * recon_loss + self.config['lambda_kl_1'] * KL_loss
+
+    @staticmethod
+    def split_graph(objs, triples):
+        # split triples, s, p and o all have size (T, 1)
+        s, p, o = tf.split(triples, num_or_size_splits=3, axis=1)
+        # squeeze, so the result size is (T,)
+        s, p, o = [tf.squeeze(x, axis=1) for x in [s, p ,o]]
+
+        return s, p, o
+
 
     def fetch_one_data(self, dataset):
         """[summary]
@@ -215,69 +261,18 @@ class NeuralDesignNetwork:
         return all_obj, all_boxes, all_pos_triples, all_size_triples
 
 
-    def test_relation(self, config):
-        test_dataset = tf.data.Dataset.list_files(os.path.join(config['test_data_dir'], '*.json'))
-        test_dataset = test_dataset.repeat().shuffle(buffer_size=100).batch(1)
-
-        acc = tf.keras.metrics.CategoricalAccuracy()
-
-        objs, _, pos_triples_gt, size_triples_gt = self.fetch_one_data(dataset=test_dataset)
-
-        s, pos_pred_gt, o = self.split_graph(objs, pos_triples_gt)
-        _, size_pred_gt, _ = self.split_graph(objs, size_triples_gt)
-
-        pos_pred = tf.ones_like(pos_pred_gt) * (len(self.vocab['pos_pred_name_to_idx']) - 1)
-        size_pred = tf.ones_like(size_pred_gt) * (len(self.vocab['size_pred_name_to_idx']) - 1)
-
-        obj_vecs = self.obj_embedding(objs)
-
-        pred_vecs = self.pos_pred_embedding(pos_pred)
-        result = self.pos_relation(obj_vecs, pred_vecs, s, o, training=False)
-        pred_gt_one_hot = tf.one_hot(pos_pred_gt, depth=len(self.vocab['pos_pred_name_to_idx']))
-        acc.update_state(pred_gt_one_hot, result['pred_cls'])
-        print('Position Acc: %f.' % acc.result().numpy())
-        acc.reset_states()
-
-        pred_vecs = self.size_pred_embedding(size_pred)
-        result = self.pos_relation(obj_vecs, pred_vecs, s, o, training=False)
-        pred_gt_one_hot = tf.one_hot(size_pred_gt, depth=len(self.vocab['size_pred_name_to_idx']))
-        acc.update_state(pred_gt_one_hot, result['pred_cls'])
-        print('Size Acc: %f.' % acc.result().numpy())
-        acc.reset_states()
-
-    def train_relation(self, config):
-        iter_cnt = 0
-        pos_relation_acc = keras.metrics.CategoricalAccuracy()
-        size_relation_acc = keras.metrics.CategoricalAccuracy()
-
+    def run(self, config):
         train_dataset = tf.data.Dataset.list_files(os.path.join(config['data_dir'], '*.json'))
         train_dataset = train_dataset.repeat().shuffle(buffer_size=100).batch(batch_size=config['batch_size'])
         test_dataset = tf.data.Dataset.list_files(os.path.join(config['test_data_dir'], '*.json'))
         test_dataset = test_dataset.repeat().shuffle(buffer_size=100).batch(batch_size=config['batch_size'])
+        sample_dataset = tf.data.Dataset.list_files(os.path.join(config['test_data_dir'], '*.json'))
+        sample_dataset = test_dataset.repeat().shuffle(buffer_size=100).batch(batch_size=config['batch_size'])
         
-        # define loss
-        def relation_loss(pred_cls_gt, pred_cls_predicted, z):
-            cls_loss = keras.losses.CategoricalCrossentropy()(pred_cls_gt, pred_cls_predicted)
-            
-            # TODO:
-            # this part is a little confusing
-            # according to paper, we need to calculate KL divergence of z and N(0, 1)
-            # where `z` is calculated from g_p(G)
-            # so we cannot get distribution of z
-
-            # here i try to sample some data from N(0, 1)
-            # then calculate discrete KL divergence
-            # i'm not sure if this is correct
-            normal_0_1 = tfp.distributions.Normal(loc=0., scale=1.)
-            sample_from_normal_0_1 = normal_0_1.sample(sample_shape=(z.shape))
-            KL_loss = keras.losses.KLDivergence()(sample_from_normal_0_1 ,z)
-
-            return config['lambda_cls'] * cls_loss + config['lambda_kl_2'] * KL_loss
-
         if self.save:
             ckpt_manager = tf.train.CheckpointManager(
-                self.ckpt, 
-                config['checkpoint_dir'], 
+                self.ckpt,
+                config['checkpoint_dir'],
                 max_to_keep=config['checkpoint_max_to_keep']
             )
 
@@ -287,27 +282,137 @@ class NeuralDesignNetwork:
             train_summary_writer = tf.summary.create_file_writer(train_log_dir)
             test_summary_writer = tf.summary.create_file_writer(test_log_dir)
 
+        # define metrics
+        pos_relation_acc = keras.metrics.CategoricalAccuracy()
+        size_relation_acc = keras.metrics.CategoricalAccuracy()
+        recon_loss = keras.metrics.MeanAbsoluteError()
+
         # start training
-        while iter_cnt < config['max_iteration_number']:
-            objs, _, pos_triples_gt, size_triples_gt = self.fetch_one_data(dataset=train_dataset)
+        while self.iter_cnt < config['max_iteration_number']:
+            objs, boxes, pos_triples_gt, size_triples_gt = self.fetch_one_data(dataset=train_dataset)
 
-            s, pos_pred_gt, o = self.split_graph(objs, pos_triples_gt)
-            _, size_pred_gt, _ = self.split_graph(objs, size_triples_gt)
+            result = self.run_step(objs, boxes, pos_triples_gt, size_triples_gt, training=True)
 
-            # randomly mask to generate training data
-            pos_pred = pos_pred_gt.numpy()
-            for item, idx in enumerate(pos_pred):
-                if random.random() <= config['mask_rate']:
-                    pos_pred[idx] = len(self.vocab['pos_pred_name_to_idx']) - 1
+            pos_loss = result['pos_loss']
+            size_loss = result['size_loss']
+            gen_loss = result['gen_loss']
+            pred_boxes = result['pred_boxes']
+            gt_pos_cls = result['gt_pos_cls']
+            pred_pos_cls = result['pred_pos_cls']
+            gt_size_cls = result['gt_size_cls']
+            pred_size_cls = result['pred_size_cls']
 
-            size_pred = size_pred_gt.numpy()
-            for item, idx in enumerate(size_pred):
-                if random.random() <= config['mask_rate']:
-                    size_pred[idx] = len(self.vocab['size_pred_name_to_idx']) - 1
+            pos_relation_acc.update_state(gt_pos_cls, pred_pos_cls)
+            size_relation_acc.update_state(gt_size_cls, pred_size_cls)
+            recon_loss.update_state(boxes, pred_boxes)
 
-            pos_pred = tf.convert_to_tensor(pos_pred)
-            size_pred = tf.convert_to_tensor(size_pred)
+            print('Step: %d. Pos Loss: %f. Size Loss: %f. Position Classification Acc: %f. Size Classification Acc: %f' 
+            % 
+            (self.iter_cnt, pos_loss.numpy(), size_loss.numpy(), pos_relation_acc.result().numpy(), size_relation_acc.result()))
 
+            print('Step: %d. Gen Loss: %f. Recon Loss: %f.'
+            %
+            (self.iter_cnt, gen_loss.numpy(), recon_loss.result().numpy()))
+
+            if self.save:
+                with train_summary_writer.as_default():
+                    tf.summary.scalar('pos_loss', pos_loss, step=self.iter_cnt)
+                    tf.summary.scalar('size_loss', size_loss, step=self.iter_cnt)
+                    tf.summary.scalar('pos_relation_acc', pos_relation_acc.result(), step=self.iter_cnt)
+                    tf.summary.scalar('size_relation_acc', size_relation_acc.result(), step=self.iter_cnt)
+
+                    tf.summary.scalar('gen_loss', gen_loss, step=self.iter_cnt)
+                    tf.summary.scalar('recon_loss', recon_loss.result(), step=self.iter_cnt)
+            
+            pos_relation_acc.reset_states()
+            size_relation_acc.reset_states()
+            recon_loss.reset_states()
+
+            # train refinement
+            # TODO
+
+            if self.save and (self.iter_cnt + 1) % config['checkpoint_every'] == 0:
+                ckpt_manager.save()
+                print('Checkpoint saved.')
+            
+            """
+            start testing
+            """
+            objs, boxes, pos_triples_gt, size_triples_gt = self.fetch_one_data(dataset=test_dataset)
+
+            result = self.run_step(objs, boxes, pos_triples_gt, size_triples_gt, training=False)
+            
+            pred_boxes = result['pred_boxes']
+            gt_pos_cls = result['gt_pos_cls']
+            pred_pos_cls = result['pred_pos_cls']
+            gt_size_cls = result['gt_size_cls']
+            pred_size_cls = result['pred_size_cls']
+
+            pos_relation_acc.update_state(gt_pos_cls, pred_pos_cls)
+            size_relation_acc.update_state(gt_size_cls, pred_size_cls)
+            recon_loss.update_state(boxes, pred_boxes)
+
+            if self.save:
+                with test_summary_writer.as_default():
+                    tf.summary.scalar('pos_loss', pos_loss, step=self.iter_cnt)
+                    tf.summary.scalar('size_loss', size_loss, step=self.iter_cnt)
+                    tf.summary.scalar('pos_relation_acc', pos_relation_acc.result(), step=self.iter_cnt)
+                    tf.summary.scalar('size_relation_acc', size_relation_acc.result(), step=self.iter_cnt)
+
+                    tf.summary.scalar('gen_loss', gen_loss, step=self.iter_cnt)
+                    tf.summary.scalar('recon_loss', recon_loss.result(), step=self.iter_cnt)
+            
+            pos_relation_acc.reset_states()
+            size_relation_acc.reset_states()
+            recon_loss.reset_states()
+
+            """
+            start sampling
+            """
+            for idx in range(10):
+                objs, boxes, pos_triples_gt, size_triples_gt = self.fetch_one_data(dataset=sample_dataset)
+
+                result = self.run_step(objs, boxes, pos_triples_gt, size_triples_gt, training=False)
+                
+                pred_boxes = result['pred_boxes']
+                gt_pos_cls = result['gt_pos_cls']
+                pred_pos_cls = result['pred_pos_cls']
+                gt_size_cls = result['gt_size_cls']
+                pred_size_cls = result['pred_size_cls']
+
+                self.draw_boxes(
+                    objs, 
+                    pred_boxes, 
+                    os.path.join(
+                        self.config['train_sample_dir'], 'train_%d_%d.png' 
+                        % (self.iter_cnt, idx)
+                    )
+                )
+
+
+            self.iter_cnt += 1
+
+    def run_step(self, config, objs, boxes, pos_triples_gt, size_triples_gt, training=True):
+        step_result = {}
+
+        s, pos_pred_gt, o = self.split_graph(objs, pos_triples_gt)
+        _, size_pred_gt, o = self.split_graph(objs, size_triples_gt)
+
+        # randomly mask to generate training data
+        pos_pred = pos_pred_gt.numpy()
+        for item, idx in enumerate(pos_pred):
+            if random.random() <= config['mask_rate']:
+                pos_pred[idx] = len(self.vocab['pos_pred_name_to_idx']) - 1
+
+        size_pred = size_pred_gt.numpy()
+        for item, idx in enumerate(size_pred):
+            if random.random() <= config['mask_rate']:
+                size_pred[idx] = len(self.vocab['size_pred_name_to_idx']) - 1
+
+        pos_pred = tf.convert_to_tensor(pos_pred)
+        size_pred = tf.convert_to_tensor(size_pred)
+
+        if training:
             # train pos relation
             with tf.GradientTape(persistent=True) as tape:
                 # get embedding of obj and pred
@@ -319,13 +424,12 @@ class NeuralDesignNetwork:
 
                 # embedding pred with one_hot, to calculate cross entropy loss
                 pred_gt_one_hot = tf.one_hot(pos_pred_gt, depth=len(self.vocab['pos_pred_name_to_idx']))
-                
+                step_result['gt_pos_cls'] = pred_gt_one_hot
                 # get latent variable of G_gt
                 z = tf.concat([result['obj_vecs_with_gt'], result['pred_vecs_with_gt']], axis=0)
-                pos_loss = relation_loss(pred_gt_one_hot, result['pred_cls'], z)
-
-            # print(self.pos_relation.trainable_variables)
-            # exit(0)
+                pos_loss = self.relation_loss(pred_gt_one_hot, result['pred_cls'], z)
+                step_result['pos_loss'] = pos_loss
+                step_result['pred_pos_cls'] = result['pred_cls']
 
             train_var = self.pos_relation.trainable_variables \
                         + self.obj_embedding.trainable_variables + self.pos_pred_embedding.trainable_variables
@@ -334,7 +438,6 @@ class NeuralDesignNetwork:
             self.relation_optimizer.apply_gradients(
                 zip(gradients, train_var)
             )
-            pos_relation_acc.update_state(pred_gt_one_hot, result['pred_cls'])
 
             # train size relation
             with tf.GradientTape(persistent=True) as tape:
@@ -348,9 +451,11 @@ class NeuralDesignNetwork:
                 result = self.size_relation(obj_vecs, pred_gt_vecs, s, o, pred_vecs=pred_vecs, training=True)
 
                 pred_gt_one_hot = tf.one_hot(size_pred_gt, depth=len(self.vocab['size_pred_name_to_idx']))
-
+                step_result['gt_size_cls'] = pred_gt_one_hot
                 z = tf.concat([result['obj_vecs_with_gt'], result['pred_vecs_with_gt']], axis=0)
-                size_loss = relation_loss(pred_gt_one_hot, result['pred_cls'], z)
+                size_loss = self.relation_loss(pred_gt_one_hot, result['pred_cls'], z)
+                step_result['size_loss'] = size_loss
+                step_result['pred_size_cls'] = result['pred_cls']
 
             train_var = self.size_relation.trainable_variables \
                         + self.obj_embedding.trainable_variables + self.size_pred_embedding.trainable_variables
@@ -359,99 +464,32 @@ class NeuralDesignNetwork:
             self.relation_optimizer.apply_gradients(
                 zip(gradients, train_var)
             )
-            size_relation_acc.update_state(pred_gt_one_hot, result['pred_cls'])
-
-
-            print('Step: %d. Pos Loss: %f. Size Loss: %f. Position Classification Acc: %f. Size Classification Acc: %f' 
-            % 
-            (iter_cnt, pos_loss.numpy(), size_loss.numpy(), pos_relation_acc.result().numpy(), size_relation_acc.result()))
-
-            if self.save:
-                with train_summary_writer.as_default():
-                    tf.summary.scalar('pos_loss', pos_loss, step=iter_cnt)
-                    tf.summary.scalar('size_loss', size_loss, step=iter_cnt)
-                    tf.summary.scalar('pos_relation_acc', pos_relation_acc.result(), step=iter_cnt)
-                    tf.summary.scalar('size_relation_acc', size_relation_acc.result(), step=iter_cnt)
-
-            pos_relation_acc.reset_states()
-            size_relation_acc.reset_states()
-
-            if self.save and (iter_cnt + 1) % config['checkpoint_every'] == 0:
-                ckpt_manager.save()
-                print('Checkpoint saved.')
-
-            # test on test dataset
-            objs, _, pos_triples_gt, size_triples_gt = self.fetch_one_data(dataset=test_dataset)
-            s, pos_pred_gt, o = self.split_graph(objs, pos_triples_gt)
-            _, size_pred_gt, _ = self.split_graph(objs, size_triples_gt)
-            obj_vecs = self.obj_embedding(objs)
-            
-            # convert every edge to unknown
+        
+        else:
             pos_pred = tf.ones_like(pos_pred_gt) * (len(self.vocab['pos_pred_name_to_idx']) - 1)
             size_pred = tf.ones_like(size_pred_gt) * (len(self.vocab['size_pred_name_to_idx']) - 1)
 
-            # test position relation classification
+            obj_vecs = self.obj_embedding(objs)
+
             pred_vecs = self.pos_pred_embedding(pos_pred)
             result = self.pos_relation(obj_vecs, pred_vecs, s, o, training=False)
-
             pred_gt_one_hot = tf.one_hot(pos_pred_gt, depth=len(self.vocab['pos_pred_name_to_idx']))
-            z = tf.concat([result['obj_vecs_with_gt'], result['pred_vecs_with_gt']], axis=0)
-            pos_loss = relation_loss(pred_gt_one_hot, result['pred_cls'], z)
-            pos_relation_acc.update_state(pred_gt_one_hot, result['pred_cls'])
+            step_result['gt_pos_cls'] = pred_gt_one_hot
+            step_result['pred_pos_cls'] = result['pred_cls']
 
-            # test size relation classification
             pred_vecs = self.size_pred_embedding(size_pred)
-            result = self.size_relation(obj_vecs, pred_vecs, s, o, training=False)
-
+            result = self.pos_relation(obj_vecs, pred_vecs, s, o, training=False)
             pred_gt_one_hot = tf.one_hot(size_pred_gt, depth=len(self.vocab['size_pred_name_to_idx']))
-            z = tf.concat([result['obj_vecs_with_gt'], result['pred_vecs_with_gt']], axis=0)
-            size_loss = relation_loss(pred_gt_one_hot, result['pred_cls'], z)
-            size_relation_acc.update_state(pred_gt_one_hot, result['pred_cls'])
+            step_result['gt_size_cls'] = pred_gt_one_hot
+            step_result['pred_size_cls'] = result['pred_cls']
 
-            if self.save:
-                with test_summary_writer.as_default():
-                    tf.summary.scalar('pos_loss', pos_loss, step=iter_cnt)
-                    tf.summary.scalar('size_loss', pos_loss, step=iter_cnt)
-                    tf.summary.scalar('pos_relation_acc', pos_relation_acc.result(), step=iter_cnt)
-                    tf.summary.scalar('size_relation_acc', size_relation_acc.result(), step=iter_cnt)
-                
-            pos_relation_acc.reset_states()
-            size_relation_acc.reset_states()
 
-            iter_cnt += 1
-            
-    def train_generation(self, config):
-        iter_cnt = 0
+
+        # train generation
+        s, pos_pred, o = self.split_graph(objs, pos_triples_gt)
+        _, size_pred, _ = self.split_graph(objs, size_triples_gt)
         
-        train_dataset = tf.data.Dataset.list_files(os.path.join(config['data_dir'], '*.json'))
-        train_dataset = train_dataset.repeat().shuffle(buffer_size=100).batch(batch_size=config['batch_size'])
-        test_dataset = tf.data.Dataset.list_files(os.path.join(config['test_data_dir'], '*.json'))
-        test_dataset = test_dataset.repeat().shuffle(buffer_size=100).batch(batch_size=config['batch_size'])
-        
-        # define loss
-        def generation_loss():
-            pass
-
-        if self.save:
-            ckpt_manager = tf.train.CheckpointManager(
-                self.ckpt, 
-                config['checkpoint_dir'], 
-                max_to_keep=config['checkpoint_max_to_keep']
-            )
-        
-            # init tensorboard writer
-            train_log_dir = os.path.join(config['log_dir'], 'train')
-            test_log_dir = os.path.join(config['log_dir'], 'test')
-            train_summary_writer = tf.summary.create_file_writer(train_log_dir)
-            test_summary_writer = tf.summary.create_file_writer(test_log_dir)
-
-        # start training
-        while iter_cnt < config['max_iteration_number']:
-            objs, _, pos_triples, size_triples = self.fetch_one_data(dataset=train_dataset)
-
-            s, pos_pred, o = self.split_graph(objs, pos_triples)
-            _, size_pred, _ = self.split_graph(objs, size_triples)
-
+        if training:
             with tf.GradientTape(persistent=True) as tape:
                 obj_vecs = self.obj_embedding(objs)
                 pos_pred_vecs = self.pos_pred_embedding(pos_pred)
@@ -462,21 +500,65 @@ class NeuralDesignNetwork:
                 s_idx = tf.concat([s, s], axis=0)
                 o_idx = tf.concat([o, o], axis=0)
 
-                result = self.generation(obj_vecs, pred_vecs, s_idx, o_idx, training=True)
+                result = self.generation(obj_vecs, pred_vecs, boxes, s_idx, o_idx, training=True)
+                step_result['pred_boxes'] = result['pred_boxes']
+                # `result` contains output of k iterations
+                gen_loss = self.generation_loss(
+                    bb_gt=boxes, 
+                    bb_predicted=result['pred_boxes'],
+                    mu=result['mu'],
+                    var=result['var'],
+                    mu_prior=result['mu_prior'],
+                    var_prior=result['var_prior']
+                )
+                step_result['gen_loss'] = gen_loss
+            
+            train_var = self.generation.trainable_variables
+            gradients = tape.gradient(gen_loss, train_var)
+            
+            self.generation_optimizer.apply_gradients(
+                zip(gradients, train_var)
+            )
+        
+        else:
+            # when not traing
+            # use the relationship predicted by previous model
+            pos_pred = tf.math.argmax(result['pred_pos_cls'], axis=1)
+            size_pred = tf.math.argmax(result['pred_size_cls'], axis=1)
+
+            obj_vecs = self.obj_embedding(objs)
+            pos_pred_vecs = self.pos_pred_embedding(pos_pred)
+            size_pred_vecs = self.size_pred_embedding(size_pred)
+
+            # concat pos_pred and size_pred
+            pred_vecs = tf.concat([pos_pred_vecs, size_pred_vecs], axis=0)
+            s_idx = tf.concat([s, s], axis=0)
+            o_idx = tf.concat([o, o], axis=0)
+
+            result = self.generation(obj_vecs, pred_vecs, boxes, s_idx, o_idx, training=False)
+            step_result['pred_boxes'] = result['pred_boxes']
 
 
+        return step_result
+    
+    def draw_boxes(self, obj_cls, boxes, output_path):
+        assert len(obj_cls) == len(boxes)
 
+        colormap = ['#aaaaaa','#0000ff', '#00ff00', '#00ffff', '#ff0000', '#ff00ff', '#ffff00', '#ffffff']
+        
+        CANVA_SIZE = 640
+        canva = Image.new('RGB', (CANVA_SIZE, CANVA_SIZE), (0, 0, 0))
+        draw = ImageDraw.Draw(canva)
 
-    def split_graph(self, objs, triples):
-        O = objs.shape[0]
-        T = triples.shape[0]
+        for idx in range(len(obj_cls)):
+            temp_cls = obj_cls[idx]
+            x, y, w, h = boxes[idx]
 
-        # split triples, s, p and o all have size (T, 1)
-        s, p, o = tf.split(triples, num_or_size_splits=3, axis=1)
-        # squeeze, so the result size is (T,)
-        s, p, o = [tf.squeeze(x, axis=1) for x in [s, p ,o]]
+            x0 = x
+            y0 = y
+            x1 = x + w
+            y1 = y + h
+            
+            draw.rectangle([x0, y0, x1, y1], outline=colormap[temp_cls])
 
-        return s, p, o
-
-    def sample(self, file_name, output_dir):
-        pass
+        canva.save(output_path)

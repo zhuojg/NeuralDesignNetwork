@@ -1,15 +1,7 @@
-import tensorflow as tf
-import numpy as np
 import os
-import json
-import random
-import math
-from PIL import Image, ImageDraw
 import argparse
 import configparser
 import datetime
-
-from tensorflow.python.autograph.utils.ag_logging import _output_to_stdout
 
 from models.pipeline import NeuralDesignNetwork
 
@@ -38,6 +30,8 @@ if __name__ == '__main__':
         'learning_rate': config.getfloat('learning_rate'),
         'beta_1': config.getfloat('beta_1'),
         'beta_2': config.getfloat('beta_2'),
+        'data_dir': config['data_dir'],
+        'test_data_dir': config['test_data_dir'],
     }
 
     if args.train:
@@ -62,15 +56,14 @@ if __name__ == '__main__':
         training_config = {
             'checkpoint_dir': checkpoint_dir,
             'log_dir': log_dir,
+            'train_sample_dir': train_sample_dir,
             'batch_size': config.getint('batch_size'),
-            'data_dir': config['data_dir'],
-            'test_data_dir': config['test_data_dir'],
             'lambda_cls': config.getfloat('lambda_cls'),
             'lambda_kl_2': config.getfloat('lambda_kl_2'),
             'mask_rate': config.getfloat('mask_rate'),
             'max_iteration_number': int(config.getfloat('max_iteration_number')),
             'checkpoint_every': int(config.getfloat('checkpoint_every')), 
-            'checkpoint_max_to_keep': config.getint('checkpoint_max_to_keep')
+            'checkpoint_max_to_keep': config.getint('checkpoint_max_to_keep'),
         }
 
         training_config = {**training_config, **model_config}
@@ -89,7 +82,7 @@ if __name__ == '__main__':
             model.train_relation(config=training_config)
         
         if args.part == 'generation':
-            pass
+            model.train_generation(config=training_config)
 
         if args.part == 'refinement':
             pass
