@@ -17,6 +17,9 @@ import random
 class NeuralDesignNetwork:
     def __init__(self, category_list, pos_relation_list, size_relation_list, config, save=False, training=True):
         super(NeuralDesignNetwork, self).__init__()
+
+        print(config)
+
         self.save = save
         self.training = training
         self.config = config

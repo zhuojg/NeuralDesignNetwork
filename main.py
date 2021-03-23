@@ -35,7 +35,6 @@ size_relation_list = ['bigger', 'smaller', 'same', 'unknown']
 if __name__ == '__main__':
     current_time = datetime.datetime.now().strftime('%Y%m%d-%H%M%S')
     model_config = {
-        
         'learning_rate': config.getfloat('learning_rate'),
         'beta_1': config.getfloat('beta_1'),
         'beta_2': config.getfloat('beta_2'),
@@ -73,12 +72,16 @@ if __name__ == '__main__':
             'checkpoint_every': int(config.getfloat('checkpoint_every')), 
             'checkpoint_max_to_keep': config.getint('checkpoint_max_to_keep')
         }
+
+        training_config = {**training_config, **model_config}
+
+        print(training_config)
         
         model = NeuralDesignNetwork(
             category_list=category_list, 
             pos_relation_list=pos_relation_list,
             size_relation_list=size_relation_list,
-            config=training_config.update(model_config),
+            config=training_config,
             save=args.save, 
             training=True)
 
