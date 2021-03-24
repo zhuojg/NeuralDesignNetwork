@@ -361,12 +361,12 @@ class NeuralDesignNetwork:
 
             if self.save:
                 with test_summary_writer.as_default():
-                    tf.summary.scalar('pos_loss', pos_loss, step=self.iter_cnt)
-                    tf.summary.scalar('size_loss', size_loss, step=self.iter_cnt)
+                    # tf.summary.scalar('pos_loss', pos_loss, step=self.iter_cnt)
+                    # tf.summary.scalar('size_loss', size_loss, step=self.iter_cnt)
                     tf.summary.scalar('pos_relation_acc', pos_relation_acc.result(), step=self.iter_cnt)
                     tf.summary.scalar('size_relation_acc', size_relation_acc.result(), step=self.iter_cnt)
 
-                    tf.summary.scalar('gen_loss', gen_loss, step=self.iter_cnt)
+                    # tf.summary.scalar('gen_loss', gen_loss, step=self.iter_cnt)
                     tf.summary.scalar('recon_loss', recon_loss.result(), step=self.iter_cnt)
             
             pos_relation_acc.reset_states()
