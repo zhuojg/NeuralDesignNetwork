@@ -139,8 +139,9 @@ cython_debug/
 
 # Project folder
 .vscode/
-data/
-ckpt/
-output/
-test/
-logs/
+data*/
+ckpt*/
+output*/
+sample*/
+test*/
+log*/

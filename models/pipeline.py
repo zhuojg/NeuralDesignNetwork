@@ -54,6 +54,8 @@ class NeuralDesignNetwork:
         self.size_relation = NDNRelation(category_list=self.vocab['object_name_to_idx'].keys(), relation_list=self.vocab['size_pred_name_to_idx'])
 
         self.generation = NDNGeneration()
+        print(self.generation.trainable_variables)
+        exit(0)
         self.refinement = NDNRefinement()
 
         self.obj_embedding = keras.layers.Embedding(input_dim=len(self.vocab['object_name_to_idx']), output_dim=64)

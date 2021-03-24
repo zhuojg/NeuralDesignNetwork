@@ -83,7 +83,7 @@ class NDNGeneration(keras.Model):
             if item != 0:
                 temp_layout.append(item)
             else:
-                layout_size_list.append(len(temp_layout))
+                layout_size_list.append(len(temp_layout) + 1)
                 temp_layout = []
 
         # simulate k iteration
@@ -129,8 +129,15 @@ class NDNGeneration(keras.Model):
                     bb_k_predicted = self.h_bb_dec(z_c_k)
                     bb_k_predicted = tf.squeeze(bb_k_predicted, axis=0)
                     result['pred_boxes'].append(bb_k_predicted)
-                    previous_bb.append(bb_k_predicted)
 
-            obj_offset += (layout_size + 1) # +1 is for __image__ item
-
+                    # for __image__ item, use gt bbox
+                    if objs[obj_offset + k] == 0:
+                        previous_bb.append([0., 0., 1., 1.,])
+                    else:
+                        previous_bb.append(bb_k_predicted)
+                
+            # to maintain the size of predicted boxes
+            # add bbox for __image__ item
+            obj_offset += (layout_size)
+        
         return result
