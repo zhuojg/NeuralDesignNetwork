@@ -605,12 +605,13 @@ class NeuralDesignNetwork:
                 s_idx = tf.concat([s, s], axis=0)
                 o_idx = tf.concat([o, o], axis=0)
 
-                result = self.refinement(obj_vecs, pred_vecs, s_idx, o_idx, training=True)
+                boxes_adjust = boxes + tf.random.uniform(shape=boxes.shape, minval=-0.05, maxval=0.05)
+                result = self.refinement(obj_vecs, pred_vecs, boxes_adjust, s_idx, o_idx, training=True)
 
                 step_result['pred_boxes_refine'] = result['bb_predicted']
 
                 refine_loss = self.refinement_loss(boxes, result['bb_predicted'])
-                result['refine_loss'] = refine_loss
+                step_result['refine_loss'] = refine_loss
             
             train_var = self.refinement.trainable_variables
             gradients = tape.gradient(refine_loss, train_var)
@@ -635,7 +636,7 @@ class NeuralDesignNetwork:
             s_idx = tf.concat([s, s], axis=0)
             o_idx = tf.concat([o, o], axis=0)
 
-            result = self.generation(objs, obj_vecs, pred_vecs, boxes, s_idx, o_idx, training=False)
+            result = self.refinement(obj_vecs, pred_vecs, boxes, s_idx, o_idx, training=False)
             step_result['pred_boxes_refine'] = result['bb_predicted']
 
         return step_result
