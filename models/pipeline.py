@@ -271,14 +271,30 @@ class NeuralDesignNetwork:
             
         return all_obj, all_boxes, all_pos_triples, all_size_triples
 
+    def test(self, config, checkpoint_path, output_dir):
+        sample_dataset = tf.data.Dataset.list_files(os.path.join(config['data_dir'], '*.json'))
+        sample_dataset = sample_dataset.repeat().batch(batch_size=1)
+
+        self.ckpt.restore(checkpoint_path)
+
+        for idx in range(10):
+            objs, boxes, pos_triples_gt, size_triples_gt = self.fetch_one_data(dataset=sample_dataset)
+
+            result = self.run_step(config, objs, boxes, pos_triples_gt, size_triples_gt, training=False)
+
+            pred_boxes = result['pred_boxes']
+
+            self.draw_boxes(objs, pred_boxes, os.path.join(output_dir, 'test_%d_predicted.png' % idx))
+            self.draw_boxes(objs, boxes, os.path.join(output_dir, 'test_%d_gt.png' % idx))
+
 
     def run(self, config):
         train_dataset = tf.data.Dataset.list_files(os.path.join(config['data_dir'], '*.json'))
         train_dataset = train_dataset.repeat().shuffle(buffer_size=100).batch(batch_size=config['batch_size'])
         test_dataset = tf.data.Dataset.list_files(os.path.join(config['test_data_dir'], '*.json'))
         test_dataset = test_dataset.repeat().shuffle(buffer_size=100).batch(batch_size=config['batch_size'])
-        sample_dataset = tf.data.Dataset.list_files(os.path.join(config['test_data_dir'], '*.json'))
-        sample_dataset = sample_dataset.repeat().shuffle(buffer_size=100).batch(batch_size=1)
+        sample_dataset = tf.data.Dataset.list_files(os.path.join(config['sample_data_dir'], '*.json'))
+        sample_dataset = sample_dataset.repeat().batch(batch_size=1)
         
         if self.save:
             ckpt_manager = tf.train.CheckpointManager(
@@ -380,7 +396,7 @@ class NeuralDesignNetwork:
             """
             start sampling
             """
-            for idx in range(5):
+            for idx in range(4):
                 objs, boxes, pos_triples_gt, size_triples_gt = self.fetch_one_data(dataset=sample_dataset)
 
                 result = self.run_step(config, objs, boxes, pos_triples_gt, size_triples_gt, training=False)
@@ -395,7 +411,16 @@ class NeuralDesignNetwork:
                     objs, 
                     pred_boxes, 
                     os.path.join(
-                        self.config['train_sample_dir'], 'train_%d_%d.png' 
+                        self.config['train_sample_dir'], 'train_%d_%d_predicted.png' 
+                        % (self.iter_cnt, idx)
+                    )
+                )
+
+                self.draw_boxes(
+                    objs,
+                    boxes,
+                    os.path.join(
+                        self.config['train_sample_dir'], 'train_%d_%d_gt.png' 
                         % (self.iter_cnt, idx)
                     )
                 )
@@ -482,7 +507,7 @@ class NeuralDesignNetwork:
 
             obj_vecs = self.obj_embedding(objs, training=False)
 
-            pred_vecs = self.pos_pred_embedding(pos_pred training=False)
+            pred_vecs = self.pos_pred_embedding(pos_pred, training=False)
             result = self.pos_relation(obj_vecs, pred_vecs, s, o, training=False)
             pred_gt_one_hot = tf.one_hot(pos_pred_gt, depth=len(self.vocab['pos_pred_name_to_idx']))
             step_result['gt_pos_cls'] = pred_gt_one_hot
@@ -570,8 +595,8 @@ class NeuralDesignNetwork:
 
             x0 = x * CANVA_SIZE
             y0 = y * CANVA_SIZE
-            x1 = x + w * CANVA_SIZE
-            y1 = y + h * CANVA_SIZE
+            x1 = x0 + w * CANVA_SIZE
+            y1 = y0 + h * CANVA_SIZE
             
             draw.rectangle([x0, y0, x1, y1], outline=colormap[temp_cls])
 

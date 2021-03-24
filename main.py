@@ -32,6 +32,8 @@ if __name__ == '__main__':
         'beta_2': config.getfloat('beta_2'),
         'data_dir': config['data_dir'],
         'test_data_dir': config['test_data_dir'],
+        'sample_data_dir': config['sample_data_dir'],
+        'mask_rate': config.getfloat('mask_rate'),
     }
 
     if args.train:
@@ -62,7 +64,7 @@ if __name__ == '__main__':
             'lambda_recon': config.getfloat('lambda_recon'),
             'lambda_kl_1': config.getfloat('lambda_kl_1'),
             'lambda_kl_2': config.getfloat('lambda_kl_2'),
-            'mask_rate': config.getfloat('mask_rate'),
+            
             'max_iteration_number': int(config.getfloat('max_iteration_number')),
             'checkpoint_every': int(config.getfloat('checkpoint_every')), 
             'checkpoint_max_to_keep': config.getint('checkpoint_max_to_keep'),
@@ -86,7 +88,7 @@ if __name__ == '__main__':
         # if not os.path.exists(args.output_dir):
         #     os.makedirs(args.output_dir)
 
-        assert args.checkpoint_path
+        assert args.checkpoint_path and args.output_dir
         
         model = NeuralDesignNetwork(
             category_list=category_list,
@@ -97,5 +99,4 @@ if __name__ == '__main__':
             training=False
         )
 
-        model.ckpt.restore(args.checkpoint_path)
-        model.test_relation(config=model_config)
+        model.test(model_config, args.checkpoint_path, args.output_dir)
