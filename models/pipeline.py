@@ -188,7 +188,8 @@ class NeuralDesignNetwork:
             # compute centers of layout in current layout
             obj_centers = []
             for box in cur_boxes:
-                x0, y0, x1, y1 = box
+                x0, y0, w, h = box
+                x1, y1 = x0 + w, y1 + h
                 obj_centers.append([(x0 + x1) / 2, (y0 + y1) / 2])
 
             # calculate triples
@@ -208,8 +209,13 @@ class NeuralDesignNetwork:
                     s = obj_index
                     o = other
 
-                    sx0, sy0, sx1, sy1 = cur_boxes[s]
-                    ox0, oy0, ox1, oy1 = cur_boxes[o]
+                    # sx0, sy0, sx1, sy1 = cur_boxes[s]
+                    # ox0, oy0, ox1, oy1 = cur_boxes[o]
+                    sx0, sy0, sw, sh = cur_boxes[s]
+                    ox0, oy0, ow, oh = cur_boxes[o]
+
+                    sx1, sy1 = sx0 + sw, sy0 + sh
+                    ox1, oy1 = ox0 + ow, oy0 + oh
 
                     d0 = obj_centers[s][0] - obj_centers[o][0]
                     d1 = obj_centers[s][1] - obj_centers[o][1]
@@ -235,8 +241,6 @@ class NeuralDesignNetwork:
 
                     # calculate size relationship
                     # now we have 3 kinds of size relationship
-                    sw, sh = sx1 - sx0, sy1 - sy0
-                    ow, oh = ox1 - ox0, oy1 - oy0
                     if sw > ow and sh > oh:
                         p = 'bigger'
                     elif sw < ow and sh < oh:
@@ -423,9 +427,9 @@ class NeuralDesignNetwork:
             # train pos relation
             with tf.GradientTape(persistent=True) as tape:
                 # get embedding of obj and pred
-                obj_vecs = self.obj_embedding(objs)
-                pred_vecs = self.pos_pred_embedding(pos_pred)
-                pred_gt_vecs = self.pos_pred_embedding(pos_pred_gt)
+                obj_vecs = self.obj_embedding(objs, training=True)
+                pred_vecs = self.pos_pred_embedding(pos_pred, training=True)
+                pred_gt_vecs = self.pos_pred_embedding(pos_pred_gt, training=True)
 
                 result = self.pos_relation(obj_vecs, pred_gt_vecs, s, o, pred_vecs=pred_vecs, training=True)
 
@@ -451,9 +455,9 @@ class NeuralDesignNetwork:
                 # TODO:
                 # use the same obj embedding here
                 # but when to update the weight of obj embedding is not sure
-                obj_vecs = self.obj_embedding(objs)
-                pred_vecs = self.size_pred_embedding(size_pred)
-                pred_gt_vecs = self.size_pred_embedding(size_pred_gt)
+                obj_vecs = self.obj_embedding(objs, training=True)
+                pred_vecs = self.size_pred_embedding(size_pred, training=True)
+                pred_gt_vecs = self.size_pred_embedding(size_pred_gt, training=True)
 
                 result = self.size_relation(obj_vecs, pred_gt_vecs, s, o, pred_vecs=pred_vecs, training=True)
 
@@ -476,15 +480,15 @@ class NeuralDesignNetwork:
             pos_pred = tf.ones_like(pos_pred_gt) * (len(self.vocab['pos_pred_name_to_idx']) - 1)
             size_pred = tf.ones_like(size_pred_gt) * (len(self.vocab['size_pred_name_to_idx']) - 1)
 
-            obj_vecs = self.obj_embedding(objs)
+            obj_vecs = self.obj_embedding(objs, training=False)
 
-            pred_vecs = self.pos_pred_embedding(pos_pred)
+            pred_vecs = self.pos_pred_embedding(pos_pred training=False)
             result = self.pos_relation(obj_vecs, pred_vecs, s, o, training=False)
             pred_gt_one_hot = tf.one_hot(pos_pred_gt, depth=len(self.vocab['pos_pred_name_to_idx']))
             step_result['gt_pos_cls'] = pred_gt_one_hot
             step_result['pred_pos_cls'] = result['pred_cls']
 
-            pred_vecs = self.size_pred_embedding(size_pred)
+            pred_vecs = self.size_pred_embedding(size_pred, training=False)
             result = self.size_relation(obj_vecs, pred_vecs, s, o, training=False)
             pred_gt_one_hot = tf.one_hot(size_pred_gt, depth=len(self.vocab['size_pred_name_to_idx']))
             step_result['gt_size_cls'] = pred_gt_one_hot
@@ -498,9 +502,9 @@ class NeuralDesignNetwork:
         
         if training:
             with tf.GradientTape(persistent=True) as tape:
-                obj_vecs = self.obj_embedding(objs)
-                pos_pred_vecs = self.pos_pred_embedding(pos_pred)
-                size_pred_vecs = self.size_pred_embedding(size_pred)
+                obj_vecs = self.obj_embedding(objs, training=True)
+                pos_pred_vecs = self.pos_pred_embedding(pos_pred, training=True)
+                size_pred_vecs = self.size_pred_embedding(size_pred, training=True)
 
                 # concat pos_pred and size_pred
                 pred_vecs = tf.concat([pos_pred_vecs, size_pred_vecs], axis=0)
@@ -533,9 +537,9 @@ class NeuralDesignNetwork:
             pos_pred = tf.math.argmax(step_result['pred_pos_cls'], axis=1)
             size_pred = tf.math.argmax(step_result['pred_size_cls'], axis=1)
 
-            obj_vecs = self.obj_embedding(objs)
-            pos_pred_vecs = self.pos_pred_embedding(pos_pred)
-            size_pred_vecs = self.size_pred_embedding(size_pred)
+            obj_vecs = self.obj_embedding(objs, training=False)
+            pos_pred_vecs = self.pos_pred_embedding(pos_pred, training=False)
+            size_pred_vecs = self.size_pred_embedding(size_pred, training=False)
 
             # concat pos_pred and size_pred
             pred_vecs = tf.concat([pos_pred_vecs, size_pred_vecs], axis=0)
