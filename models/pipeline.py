@@ -110,10 +110,10 @@ class NeuralDesignNetwork:
         var = tf.concat(var, axis=0)
         mu_prior = tf.concat(mu_prior, axis=0)
         var_prior = tf.concat(var_prior, axis=0)
-        sigma = tf.math.exp(0.5 * var)
-        sigma_prior = tf.math.exp(0.5 * var_prior)
-        KL_loss = tf.math.log(sigma_prior / sigma + 1e-8) + (tf.math.pow(sigma, 2) + tf.math.pow(mu - mu_prior, 2)) / (2 * tf.math.pow(sigma_prior, 2)) - 1./2
-        KL_loss = tf.math.reduce_mean(KL_loss)
+        sigma = tf.math.exp(.5 * var)
+        sigma_prior = tf.math.exp(.5 * var_prior)
+        KL_loss = tf.math.log(sigma_prior / (sigma + 1e-8)) + (tf.math.pow(sigma, 2) + tf.math.pow(mu - mu_prior, 2)) / (2 * tf.math.pow(sigma_prior, 2)) - .5
+        KL_loss = tf.math.reduce_sum(KL_loss)
 
         return self.config['lambda_recon'] * recon_loss + self.config['lambda_kl_1'] * KL_loss
 
@@ -507,7 +507,7 @@ class NeuralDesignNetwork:
                 s_idx = tf.concat([s, s], axis=0)
                 o_idx = tf.concat([o, o], axis=0)
 
-                result = self.generation(obj_vecs, pred_vecs, boxes, s_idx, o_idx, training=True)
+                result = self.generation(objs, obj_vecs, pred_vecs, boxes, s_idx, o_idx, training=True)
                 step_result['pred_boxes'] = result['pred_boxes']
                 # `result` contains output of k iterations
                 gen_loss = self.generation_loss(
@@ -542,7 +542,7 @@ class NeuralDesignNetwork:
             s_idx = tf.concat([s, s], axis=0)
             o_idx = tf.concat([o, o], axis=0)
 
-            result = self.generation(obj_vecs, pred_vecs, boxes, s_idx, o_idx, training=False)
+            result = self.generation(objs, obj_vecs, pred_vecs, boxes, s_idx, o_idx, training=False)
             step_result['pred_boxes'] = result['pred_boxes']
 
 
@@ -558,6 +558,9 @@ class NeuralDesignNetwork:
         draw = ImageDraw.Draw(canva)
 
         for idx in range(len(obj_cls)):
+            if obj_cls[idx] == 0:
+                continue
+
             temp_cls = obj_cls[idx]
             x, y, w, h = boxes[idx]
 
