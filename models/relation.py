@@ -17,7 +17,9 @@ class NDNRelation(keras.Model):
                 128, 
                 512, 
                 len(relation_list)
-            ]
+            ],
+            activation='leaky_relu',
+            batch_norm='batch'
         )
 
     def call(self, obj_vecs, pred_gt_vecs, s_idx, o_idx, pred_vecs=None, training=True):

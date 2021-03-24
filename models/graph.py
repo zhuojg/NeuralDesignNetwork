@@ -20,11 +20,11 @@ class GraphTripleConv(tf.keras.Model):
         self.pooling = pooling
         net1_layers = [3 * input_dim, hidden_dim, 2 * hidden_dim + output_dim]
 
-        self.net1 = build_mlp(net1_layers)
+        self.net1 = build_mlp(net1_layers, activation='leaky_relu', batch_norm='batch')
         # TODO: add init of net1
 
         net2_layers = [hidden_dim, hidden_dim, output_dim]
-        self.net2 = build_mlp(net2_layers)
+        self.net2 = build_mlp(net2_layers, activation='leaky_relu', batch_norm='batch')
         # TODO: add init of net2
 
     def call(self, obj_vecs, pred_vecs, edges, training=True):
@@ -54,7 +54,7 @@ class GraphTripleConv(tf.keras.Model):
 
         # (T, 3 * D)
         cur_t_vecs = tf.concat([cur_s_vecs, pred_vecs, cur_o_vecs], axis=1)
-        new_t_vecs = self.net1(cur_t_vecs)
+        new_t_vecs = self.net1(cur_t_vecs, training=training)
 
         # (T, x)
         new_s_vecs = new_t_vecs[:, :H]
@@ -82,7 +82,7 @@ class GraphTripleConv(tf.keras.Model):
             obj_counts = tf.clip_by_value(obj_counts, 1, O)
             pooled_obj_vecs = pooled_obj_vecs / tf.reshape(obj_counts, (-1, 1))
 
-        new_obj_vecs = self.net2(pooled_obj_vecs)
+        new_obj_vecs = self.net2(pooled_obj_vecs, training=training)
 
         return new_obj_vecs, new_p_vecs
 
@@ -105,10 +105,10 @@ class GraphTripleConvNet(tf.keras.Model):
         for _ in range(self.num_layers):
             self.gconvs.append(GraphTripleConv(**gconv_kwargs))
 
-    def call(self, obj_vecs, pred_vecs, edges):
+    def call(self, obj_vecs, pred_vecs, edges, training=True):
         for i in range(self.num_layers):
             gconv = self.gconvs[i]
-            obj_vecs, pred_vecs = gconv(obj_vecs, pred_vecs, edges)
+            obj_vecs, pred_vecs = gconv(obj_vecs, pred_vecs, edges, training=training)
         
         return obj_vecs, pred_vecs
 

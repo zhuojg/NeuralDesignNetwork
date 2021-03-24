@@ -19,8 +19,8 @@ class NDNGeneration(keras.Model):
         g_update_f_input = keras.layers.Input(shape=(128))
         g_update_b_input = keras.layers.Input(shape=(4))
         g_update_input = tf.concat([g_update_f_input, g_update_b_input], axis=-1)
-        g_update_hidden = keras.layers.Dense(128, activation='relu')(g_update_input)
-        g_update_hidden = keras.layers.Dense(128, activation='relu')(g_update_hidden)
+        g_update_hidden = keras.layers.Dense(128, activation=tf.nn.leaky_relu)(g_update_input)
+        g_update_hidden = keras.layers.Dense(128, activation=tf.nn.leaky_relu)(g_update_hidden)
         
         self.g_update = keras.Model(inputs=[g_update_f_input, g_update_b_input], outputs=[g_update_hidden])
 
@@ -28,23 +28,23 @@ class NDNGeneration(keras.Model):
         # h_bb_encoder take condition and bb_gt as input
         h_bb_enc_inputs_bb = keras.layers.Input(shape=(4))
         h_bb_enc_inputs_c = keras.layers.Input(shape=(128))
-        h_bb_enc_hidden_bb = keras.layers.Dense(128, activation='relu')(h_bb_enc_inputs_bb)
-        h_bb_enc_hidden_c = keras.layers.Dense(128, activation='relu')(h_bb_enc_inputs_c)
+        h_bb_enc_hidden_bb = keras.layers.Dense(128, activation=tf.nn.leaky_relu)(h_bb_enc_inputs_bb)
+        h_bb_enc_hidden_c = keras.layers.Dense(128, activation=tf.nn.leaky_relu)(h_bb_enc_inputs_c)
         h_bb_enc_hidden = tf.concat([h_bb_enc_hidden_bb, h_bb_enc_hidden_c], axis=-1)
-        h_bb_enc_result = keras.layers.Dense(32, activation='relu')(h_bb_enc_hidden)
-        h_bb_enc_mu = keras.layers.Dense(32, activation='relu')(h_bb_enc_result)
-        h_bb_enc_var = keras.layers.Dense(32, activation='relu')(h_bb_enc_result)
+        h_bb_enc_result = keras.layers.Dense(32, activation=tf.nn.leaky_relu)(h_bb_enc_hidden)
+        h_bb_enc_mu = keras.layers.Dense(32, activation=tf.nn.leaky_relu)(h_bb_enc_result)
+        h_bb_enc_var = keras.layers.Dense(32, activation=tf.nn.leaky_relu)(h_bb_enc_result)
         self.h_bb_enc = keras.Model(inputs=[h_bb_enc_inputs_bb, h_bb_enc_inputs_c], outputs=[h_bb_enc_mu, h_bb_enc_var])
 
         # prior_encoder take condition as input
         # and we try to minimize the KL divergence between prior_encoder and h_bb_encoder
         # so during inference, we can generate bb with condition only
         prior_input = keras.layers.Input(shape=(128))
-        prior_x = keras.layers.Dense(128, activation='relu')(prior_input)
-        prior_x = keras.layers.Dense(128, activation='relu')(prior_x)
-        prior_x = keras.layers.Dense(32, activation='relu')(prior_x)
-        prior_mu = keras.layers.Dense(32, activation='relu')(prior_x)
-        prior_var = keras.layers.Dense(32, activation='relu')(prior_x)
+        prior_x = keras.layers.Dense(128, activation=tf.nn.leaky_relu)(prior_input)
+        prior_x = keras.layers.Dense(128, activation=tf.nn.leaky_relu)(prior_x)
+        prior_x = keras.layers.Dense(32, activation=tf.nn.leaky_relu)(prior_x)
+        prior_mu = keras.layers.Dense(32, activation=tf.nn.leaky_relu)(prior_x)
+        prior_var = keras.layers.Dense(32, activation=tf.nn.leaky_relu)(prior_x)
         self.prior_encoder = keras.Model(inputs=[prior_input], outputs=[prior_mu, prior_var])
     
     def reparameterize(self, mu, var):
@@ -100,19 +100,19 @@ class NDNGeneration(keras.Model):
                 while len(temp_bb) < layout_size:
                     temp_bb.append([0., 0., 0., 0.])
                 
-                c_k = self.g_update([temp_obj_vecs, tf.convert_to_tensor(temp_bb)])
+                c_k = self.g_update([temp_obj_vecs, tf.convert_to_tensor(temp_bb)], training=training)
                 c_k = tf.reduce_mean(c_k, axis=0)
 
                 if training:
                     temp_boxes = tf.expand_dims(boxes[k + obj_offset], axis=0)
                     c_k = tf.expand_dims(c_k, axis=0)
-                    z_mu, z_var = self.h_bb_enc([temp_boxes, c_k])
+                    z_mu, z_var = self.h_bb_enc([temp_boxes, c_k], training=training)
                     result['mu'].append(z_mu)
                     result['var'].append(z_var)
                     z = self.reparameterize(z_mu, z_var)
 
                     z_c_k = tf.concat([z, c_k], axis=-1)
-                    bb_k_predicted = self.h_bb_dec(z_c_k)
+                    bb_k_predicted = self.h_bb_dec(z_c_k, training=True)
                     bb_k_predicted = tf.squeeze(bb_k_predicted, axis=0)
                     result['pred_boxes'].append(bb_k_predicted)
 
@@ -126,7 +126,7 @@ class NDNGeneration(keras.Model):
                     z_mu, z_var = self.prior_encoder(c_k)
                     z = self.reparameterize(z_mu, z_var)
                     z_c_k = tf.concat([z, c_k], axis=-1)
-                    bb_k_predicted = self.h_bb_dec(z_c_k)
+                    bb_k_predicted = self.h_bb_dec(z_c_k, training=False)
                     bb_k_predicted = tf.squeeze(bb_k_predicted, axis=0)
                     result['pred_boxes'].append(bb_k_predicted)
 
