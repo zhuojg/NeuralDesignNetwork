@@ -117,6 +117,11 @@ class NeuralDesignNetwork:
 
         return self.config['lambda_recon'] * recon_loss + self.config['lambda_kl_1'] * KL_loss
 
+    def refinement_loss(self, bb_gt, bb_predicted):
+        recon_loss = tf.keras.losses.MeanAbsoluteError()(bb_gt, bb_predicted)
+
+        return recon_loss * bb_gt.shape[0] # return the sum, not mean
+
     @staticmethod
     def split_graph(objs, triples):
         # split triples, s, p and o all have size (T, 1)
@@ -323,7 +328,9 @@ class NeuralDesignNetwork:
             pos_loss = result['pos_loss']
             size_loss = result['size_loss']
             gen_loss = result['gen_loss']
+            refine_loss = result['refine_loss']
             pred_boxes = result['pred_boxes']
+            pred_boxes_refine = result['pred_boxes_refine']
             gt_pos_cls = result['gt_pos_cls']
             pred_pos_cls = result['pred_pos_cls']
             gt_size_cls = result['gt_size_cls']
@@ -331,7 +338,7 @@ class NeuralDesignNetwork:
 
             pos_relation_acc.update_state(gt_pos_cls, pred_pos_cls)
             size_relation_acc.update_state(gt_size_cls, pred_size_cls)
-            recon_loss.update_state(boxes, pred_boxes)
+            recon_loss.update_state(boxes, pred_boxes_refine)
 
             print('Step: %d. Pos Loss: %f. Size Loss: %f. Position Classification Acc: %f. Size Classification Acc: %f' 
             % 
@@ -350,13 +357,12 @@ class NeuralDesignNetwork:
 
                     tf.summary.scalar('gen_loss', gen_loss, step=self.iter_cnt)
                     tf.summary.scalar('recon_loss', recon_loss.result(), step=self.iter_cnt)
+
+                    tf.summary.scalar('refine_loss', refine_loss, step=self.iter_cnt)
             
             pos_relation_acc.reset_states()
             size_relation_acc.reset_states()
             recon_loss.reset_states()
-
-            # train refinement
-            # TODO
 
             if self.save and (self.iter_cnt + 1) % config['checkpoint_every'] == 0:
                 ckpt_manager.save()
@@ -370,6 +376,7 @@ class NeuralDesignNetwork:
             result = self.run_step(config, objs, boxes, pos_triples_gt, size_triples_gt, training=False)
             
             pred_boxes = result['pred_boxes']
+            pred_boxes_refine = result['pred_boxes_refine']
             gt_pos_cls = result['gt_pos_cls']
             pred_pos_cls = result['pred_pos_cls']
             gt_size_cls = result['gt_size_cls']
@@ -377,7 +384,7 @@ class NeuralDesignNetwork:
 
             pos_relation_acc.update_state(gt_pos_cls, pred_pos_cls)
             size_relation_acc.update_state(gt_size_cls, pred_size_cls)
-            recon_loss.update_state(boxes, pred_boxes)
+            recon_loss.update_state(boxes, pred_boxes_refine)
 
             if self.save:
                 with test_summary_writer.as_default():
@@ -402,16 +409,26 @@ class NeuralDesignNetwork:
                 result = self.run_step(config, objs, boxes, pos_triples_gt, size_triples_gt, training=False)
                 
                 pred_boxes = result['pred_boxes']
+                pred_boxes_refine = result['pred_boxes_refine']
                 gt_pos_cls = result['gt_pos_cls']
                 pred_pos_cls = result['pred_pos_cls']
                 gt_size_cls = result['gt_size_cls']
                 pred_size_cls = result['pred_size_cls']
 
                 self.draw_boxes(
-                    objs, 
+                    objs,
                     pred_boxes, 
                     os.path.join(
                         self.config['train_sample_dir'], 'train_%d_%d_predicted.png' 
+                        % (self.iter_cnt, idx)
+                    )
+                )
+
+                self.draw_boxes(
+                    objs,
+                    pred_boxes_refine,
+                    os.path.join(
+                        self.config['train_sample_dir'], 'train_%d_%d_refined.png' 
                         % (self.iter_cnt, idx)
                     )
                 )
@@ -436,18 +453,19 @@ class NeuralDesignNetwork:
 
         # randomly mask to generate training data
         pos_pred = pos_pred_gt.numpy()
-        for idx, item in enumerate(pos_pred):
+        for idx, _ in enumerate(pos_pred):
             if random.random() <= config['mask_rate']:
                 pos_pred[idx] = len(self.vocab['pos_pred_name_to_idx']) - 1
 
         size_pred = size_pred_gt.numpy()
-        for idx, item in enumerate(size_pred):
+        for idx, _ in enumerate(size_pred):
             if random.random() <= config['mask_rate']:
                 size_pred[idx] = len(self.vocab['size_pred_name_to_idx']) - 1
 
         pos_pred = tf.convert_to_tensor(pos_pred)
         size_pred = tf.convert_to_tensor(size_pred)
 
+        # train relation
         if training:
             # train pos relation
             with tf.GradientTape(persistent=True) as tape:
@@ -574,6 +592,51 @@ class NeuralDesignNetwork:
             result = self.generation(objs, obj_vecs, pred_vecs, boxes, s_idx, o_idx, training=False)
             step_result['pred_boxes'] = result['pred_boxes']
 
+
+        # refinement part
+        if training:
+            with tf.GradientTape(persistent=True) as tape:
+                obj_vecs = self.obj_embedding(objs, training=True)
+                pos_pred_vecs = self.pos_pred_embedding(pos_pred, training=True)
+                size_pred_vecs = self.size_pred_embedding(size_pred, training=True)
+
+                # concat pos_pred and size_pred
+                pred_vecs = tf.concat([pos_pred_vecs, size_pred_vecs], axis=0)
+                s_idx = tf.concat([s, s], axis=0)
+                o_idx = tf.concat([o, o], axis=0)
+
+                result = self.refinement(obj_vecs, pred_vecs, s_idx, o_idx, training=True)
+
+                step_result['pred_boxes_refine'] = result['bb_predicted']
+
+                refine_loss = self.refinement_loss(boxes, result['bb_predicted'])
+                result['refine_loss'] = refine_loss
+            
+            train_var = self.refinement.trainable_variables
+            gradients = tape.gradient(refine_loss, train_var)
+
+            self.refinement_optimizer.apply_gradients(
+                zip(gradients, train_var)
+            )
+
+
+        else:
+            # when not traing
+            # use the relationship predicted by previous model
+            pos_pred = tf.math.argmax(step_result['pred_pos_cls'], axis=1)
+            size_pred = tf.math.argmax(step_result['pred_size_cls'], axis=1)
+
+            obj_vecs = self.obj_embedding(objs, training=False)
+            pos_pred_vecs = self.pos_pred_embedding(pos_pred, training=False)
+            size_pred_vecs = self.size_pred_embedding(size_pred, training=False)
+
+            # concat pos_pred and size_pred
+            pred_vecs = tf.concat([pos_pred_vecs, size_pred_vecs], axis=0)
+            s_idx = tf.concat([s, s], axis=0)
+            o_idx = tf.concat([o, o], axis=0)
+
+            result = self.generation(objs, obj_vecs, pred_vecs, boxes, s_idx, o_idx, training=False)
+            step_result['pred_boxes_refine'] = result['bb_predicted']
 
         return step_result
     
