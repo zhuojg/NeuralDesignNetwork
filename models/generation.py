@@ -15,12 +15,12 @@ class NDNGeneration(keras.Model):
         # TODO:
         # in paper, g_update is a GCN with node feature and bbox as input
         # howevert, I think it's not possible to handle this input by GCN described in paper
-        # so rewrite g_update as a MLP
+        # so I rewrite g_update as a MLP
         g_update_f_input = keras.layers.Input(shape=(128))
         g_update_b_input = keras.layers.Input(shape=(4))
         g_update_input = tf.concat([g_update_f_input, g_update_b_input], axis=-1)
-        g_update_hidden = keras.layers.Dense(128)(g_update_input)
-        g_update_hidden = keras.layers.Dense(128)(g_update_hidden)
+        g_update_hidden = keras.layers.Dense(128, activation='relu')(g_update_input)
+        g_update_hidden = keras.layers.Dense(128, activation='relu')(g_update_hidden)
         
         self.g_update = keras.Model(inputs=[g_update_f_input, g_update_b_input], outputs=[g_update_hidden])
 
@@ -28,23 +28,23 @@ class NDNGeneration(keras.Model):
         # h_bb_encoder take condition and bb_gt as input
         h_bb_enc_inputs_bb = keras.layers.Input(shape=(4))
         h_bb_enc_inputs_c = keras.layers.Input(shape=(128))
-        h_bb_enc_hidden_bb = keras.layers.Dense(128)(h_bb_enc_inputs_bb)
-        h_bb_enc_hidden_c = keras.layers.Dense(128)(h_bb_enc_inputs_c)
+        h_bb_enc_hidden_bb = keras.layers.Dense(128, activation='relu')(h_bb_enc_inputs_bb)
+        h_bb_enc_hidden_c = keras.layers.Dense(128, activation='relu')(h_bb_enc_inputs_c)
         h_bb_enc_hidden = tf.concat([h_bb_enc_hidden_bb, h_bb_enc_hidden_c], axis=-1)
-        h_bb_enc_result = keras.layers.Dense(32)(h_bb_enc_hidden)
-        h_bb_enc_mu = keras.layers.Dense(32)(h_bb_enc_result)
-        h_bb_enc_var = keras.layers.Dense(32)(h_bb_enc_result)
+        h_bb_enc_result = keras.layers.Dense(32, activation='relu')(h_bb_enc_hidden)
+        h_bb_enc_mu = keras.layers.Dense(32, activation='relu')(h_bb_enc_result)
+        h_bb_enc_var = keras.layers.Dense(32, activation='relu')(h_bb_enc_result)
         self.h_bb_enc = keras.Model(inputs=[h_bb_enc_inputs_bb, h_bb_enc_inputs_c], outputs=[h_bb_enc_mu, h_bb_enc_var])
 
         # prior_encoder take condition as input
         # and we try to minimize the KL divergence between prior_encoder and h_bb_encoder
         # so during inference, we can generate bb with condition only
         prior_input = keras.layers.Input(shape=(128))
-        prior_x = keras.layers.Dense(128)(prior_input)
-        prior_x = keras.layers.Dense(128)(prior_x)
-        prior_x = keras.layers.Dense(32)(prior_x)
-        prior_mu = keras.layers.Dense(32)(prior_x)
-        prior_var = keras.layers.Dense(32)(prior_x)
+        prior_x = keras.layers.Dense(128, activation='relu')(prior_input)
+        prior_x = keras.layers.Dense(128, activation='relu')(prior_x)
+        prior_x = keras.layers.Dense(32, activation='relu')(prior_x)
+        prior_mu = keras.layers.Dense(32, activation='relu')(prior_x)
+        prior_var = keras.layers.Dense(32, activation='relu')(prior_x)
         self.prior_encoder = keras.Model(inputs=[prior_input], outputs=[prior_mu, prior_var])
     
     def reparameterize(self, mu, var):
@@ -64,7 +64,7 @@ class NDNGeneration(keras.Model):
         z = eps * tf.exp(var * .5) + mu
         return z
 
-    def call(self, obj_vecs, pred_vecs, boxes, s_idx, o_idx, training=True):
+    def call(self, objs, obj_vecs, pred_vecs, boxes, s_idx, o_idx, training=True):
         O = obj_vecs.shape[0]
 
         result = {}
@@ -77,43 +77,60 @@ class NDNGeneration(keras.Model):
         new_obj_vecs, _ = self.g_enc(obj_vecs, pred_vecs, tf.stack([s_idx, o_idx], axis=1), training=training)
         # (O, 128)
 
-        previous_bb = []
+        layout_size_list = []
+        temp_layout = []
+        for item in objs:
+            if item != 0:
+                temp_layout.append(item)
+            else:
+                layout_size_list.append(len(temp_layout))
+                temp_layout = []
 
         # simulate k iteration
-        for k in range(O):
-            temp_bb = previous_bb.copy()
-            while len(temp_bb) < O:
-                temp_bb.append([0., 0., 0., 0.])
-            
-            c_k = self.g_update([new_obj_vecs, tf.convert_to_tensor(temp_bb)])
-            c_k = tf.reduce_mean(c_k, axis=0)
+        # we have batch_size layout in objs
+        # we need to calculate c_k for different layout
+        # layout is marked by __image__ item, 
+        # which is at the end of a list of elements
+        obj_offset = 0
+        for layout_size in layout_size_list:
+            previous_bb = []
+            temp_obj_vecs = new_obj_vecs.numpy()[obj_offset : obj_offset + layout_size]
+            for k in range(layout_size):
+                temp_bb = previous_bb.copy()
+                while len(temp_bb) < layout_size:
+                    temp_bb.append([0., 0., 0., 0.])
+                
+                c_k = self.g_update([temp_obj_vecs, tf.convert_to_tensor(temp_bb)])
+                c_k = tf.reduce_mean(c_k, axis=0)
 
-            if training:
-                temp_boxes = tf.expand_dims(boxes[k], axis=0)
-                c_k = tf.expand_dims(c_k, axis=0)
-                z_mu, z_var = self.h_bb_enc([temp_boxes, c_k])
-                result['mu'].append(z_mu)
-                result['var'].append(z_var)
-                z = self.reparameterize(z_mu, z_var)
+                if training:
+                    temp_boxes = tf.expand_dims(boxes[k + obj_offset], axis=0)
+                    c_k = tf.expand_dims(c_k, axis=0)
+                    z_mu, z_var = self.h_bb_enc([temp_boxes, c_k])
+                    result['mu'].append(z_mu)
+                    result['var'].append(z_var)
+                    z = self.reparameterize(z_mu, z_var)
 
-                z_c_k = tf.concat([z, c_k], axis=-1)
-                bb_k_predicted = self.h_bb_dec(z_c_k)
-                bb_k_predicted = tf.squeeze(bb_k_predicted, axis=0)
-                result['pred_boxes'].append(bb_k_predicted)
+                    z_c_k = tf.concat([z, c_k], axis=-1)
+                    bb_k_predicted = self.h_bb_dec(z_c_k)
+                    bb_k_predicted = tf.squeeze(bb_k_predicted, axis=0)
+                    result['pred_boxes'].append(bb_k_predicted)
 
-                z_mu, z_var = self.prior_encoder(c_k)
-                result['mu_prior'].append(z_mu)
-                result['var_prior'].append(z_var)
-                previous_bb.append(boxes[k])
-            else:
-                c_k = tf.expand_dims(c_k, axis=0)
-                # bb_k_predicted = self.prior_encoder(c_k)
-                z_mu, z_var = self.prior_encoder(c_k)
-                z = self.reparameterize(z_mu, z_var)
-                z_c_k = tf.concat([z, c_k], axis=-1)
-                bb_k_predicted = self.h_bb_dec(z_c_k)
-                bb_k_predicted = tf.squeeze(bb_k_predicted, axis=0)
-                result['pred_boxes'].append(bb_k_predicted)
-                previous_bb.append(bb_k_predicted)
+                    z_mu, z_var = self.prior_encoder(c_k)
+                    result['mu_prior'].append(z_mu)
+                    result['var_prior'].append(z_var)
+                    previous_bb.append(boxes[k + obj_offset])
+
+                else:
+                    c_k = tf.expand_dims(c_k, axis=0)
+                    z_mu, z_var = self.prior_encoder(c_k)
+                    z = self.reparameterize(z_mu, z_var)
+                    z_c_k = tf.concat([z, c_k], axis=-1)
+                    bb_k_predicted = self.h_bb_dec(z_c_k)
+                    bb_k_predicted = tf.squeeze(bb_k_predicted, axis=0)
+                    result['pred_boxes'].append(bb_k_predicted)
+                    previous_bb.append(bb_k_predicted)
+
+            obj_offset += (layout_size + 1) # +1 is for __image__ item
 
         return result
