@@ -94,7 +94,7 @@ class NDNGeneration(keras.Model):
         obj_offset = 0
         for layout_size in layout_size_list:
             previous_bb = []
-            temp_obj_vecs = new_obj_vecs.numpy()[obj_offset : obj_offset + layout_size]
+            temp_obj_vecs = new_obj_vecs[obj_offset : obj_offset + layout_size]
             for k in range(layout_size):
                 temp_bb = previous_bb.copy()
                 while len(temp_bb) < layout_size:
