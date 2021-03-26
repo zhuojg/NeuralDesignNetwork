@@ -20,9 +20,8 @@ class NDNGeneration(keras.Model):
         g_update_b_input = keras.layers.Input(shape=(4))
         g_update_input = tf.concat([g_update_f_input, g_update_b_input], axis=-1)
         g_update_hidden = keras.layers.Dense(128, activation=tf.nn.leaky_relu)(g_update_input)
-        g_update_hidden = keras.layers.Dense(128, activation=tf.nn.leaky_relu)(g_update_hidden)
-        
-        self.g_update = keras.Model(inputs=[g_update_f_input, g_update_b_input], outputs=[g_update_hidden])
+        self.g_update_embedding = keras.Model(inputs=[g_update_f_input, g_update_b_input], outputs=[g_update_hidden])
+        self.g_update = GraphTripleConvStack([(128, 512, 128)])
 
         # build h_bb_encoder
         # h_bb_encoder take condition and bb_gt as input
@@ -78,7 +77,9 @@ class NDNGeneration(keras.Model):
         # (O, 128)
 
         layout_size_list = []
+        layout_pred_size_list = []
         temp_layout = []
+
         for item in objs:
             if item != 0:
                 temp_layout.append(item)
@@ -86,22 +87,37 @@ class NDNGeneration(keras.Model):
                 layout_size_list.append(len(temp_layout) + 1)
                 temp_layout = []
 
+                # with N elements in layout
+                # we have N - 1 elements except __image__
+                # these N - 1 elements are all connected to each other
+                # so we have (N-1)(N-2) preds
+                # for __image__ item, it is connected to all other N - 1 elements
+                # so the final pred number is (N - 1)(N- 2) + (N - 1) = (N - 1)^2
+                layout_pred_size_list.append((len(layout_size_list[-1]) - 1) ** 2)
+        
         # simulate k iteration
         # we have batch_size layout in objs
         # we need to calculate c_k for different layout
         # layout is marked by __image__ item, 
         # which is at the end of a list of elements
         obj_offset = 0
-        for layout_size in layout_size_list:
+        pred_offset = 0
+        for idx, layout_size in enumerate(layout_size_list):
             previous_bb = []
             temp_obj_vecs = new_obj_vecs[obj_offset : obj_offset + layout_size]
+            temp_pred_vecs = pred_vecs[pred_offset : pred_offset + layout_pred_size_list[idx]]
+            temp_s_idx = s_idx[pred_offset : pred_offset + layout_pred_size_list[idx]]
+            temp_o_idx = o_idx[pred_offset : pred_offset + layout_pred_size_list[idx]]
+
             for k in range(layout_size):
                 temp_bb = previous_bb.copy()
                 while len(temp_bb) < layout_size:
                     temp_bb.append([0., 0., 0., 0.])
                 
-                c_k = self.g_update([temp_obj_vecs, tf.convert_to_tensor(temp_bb)], training=training)
-                c_k = tf.reduce_mean(c_k, axis=0)
+                temp_new_obj_vecs = self.g_update_embedding([temp_obj_vecs, tf.convert_to_tensor(temp_bb)], training=training)
+                temp_new_obj_vecs, temp_pred_vecs = self.g_update(temp_new_obj_vecs, temp_pred_vecs, tf.stack([temp_s_idx, temp_o_idx], axis=1), training=traing)
+
+                c_k = tf.reduce_mean(tf.stack([temp_new_obj_vecs, temp_pred_vecs], axis=0), axis=0)
 
                 if training:
                     temp_boxes = tf.expand_dims(boxes[k + obj_offset], axis=0)
@@ -139,5 +155,6 @@ class NDNGeneration(keras.Model):
             # to maintain the size of predicted boxes
             # add bbox for __image__ item
             obj_offset += (layout_size)
+            pred_offset += (layout_pred_size_list[idx])
         
         return result
