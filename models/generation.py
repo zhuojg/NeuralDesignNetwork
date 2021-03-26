@@ -73,7 +73,7 @@ class NDNGeneration(keras.Model):
         result['mu_prior'] = []
         result['var_prior'] = []
 
-        new_obj_vecs, _ = self.g_enc(obj_vecs, pred_vecs, tf.stack([s_idx, o_idx], axis=1), training=training)
+        new_obj_vecs, new_pred_vecs = self.g_enc(obj_vecs, pred_vecs, tf.stack([s_idx, o_idx], axis=1), training=training)
         # (O, 128)
 
         layout_size_list = []
@@ -93,7 +93,7 @@ class NDNGeneration(keras.Model):
                 # so we have (N-1)(N-2) preds
                 # for __image__ item, it is connected to all other N - 1 elements
                 # so the final pred number is (N - 1)(N- 2) + (N - 1) = (N - 1)^2
-                layout_pred_size_list.append((len(layout_size_list[-1]) - 1) ** 2)
+                layout_pred_size_list.append((layout_size_list[-1] - 1) ** 2)
         
         # simulate k iteration
         # we have batch_size layout in objs
@@ -105,9 +105,9 @@ class NDNGeneration(keras.Model):
         for idx, layout_size in enumerate(layout_size_list):
             previous_bb = []
             temp_obj_vecs = new_obj_vecs[obj_offset : obj_offset + layout_size]
-            temp_pred_vecs = pred_vecs[pred_offset : pred_offset + layout_pred_size_list[idx]]
-            temp_s_idx = s_idx[pred_offset : pred_offset + layout_pred_size_list[idx]]
-            temp_o_idx = o_idx[pred_offset : pred_offset + layout_pred_size_list[idx]]
+            temp_pred_vecs = new_pred_vecs[pred_offset : pred_offset + layout_pred_size_list[idx]]
+            temp_s_idx = s_idx[pred_offset : pred_offset + layout_pred_size_list[idx]] - obj_offset
+            temp_o_idx = o_idx[pred_offset : pred_offset + layout_pred_size_list[idx]] - obj_offset
 
             for k in range(layout_size):
                 temp_bb = previous_bb.copy()
@@ -115,9 +115,9 @@ class NDNGeneration(keras.Model):
                     temp_bb.append([0., 0., 0., 0.])
                 
                 temp_new_obj_vecs = self.g_update_embedding([temp_obj_vecs, tf.convert_to_tensor(temp_bb)], training=training)
-                temp_new_obj_vecs, temp_pred_vecs = self.g_update(temp_new_obj_vecs, temp_pred_vecs, tf.stack([temp_s_idx, temp_o_idx], axis=1), training=traing)
+                temp_new_obj_vecs, temp_new_pred_vecs = self.g_update(temp_new_obj_vecs, temp_pred_vecs, tf.stack([temp_s_idx, temp_o_idx], axis=1), training=training)
 
-                c_k = tf.reduce_mean(tf.stack([temp_new_obj_vecs, temp_pred_vecs], axis=0), axis=0)
+                c_k = tf.reduce_mean(tf.concat([temp_new_obj_vecs, temp_pred_vecs], axis=0), axis=0)
 
                 if training:
                     temp_boxes = tf.expand_dims(boxes[k + obj_offset], axis=0)
