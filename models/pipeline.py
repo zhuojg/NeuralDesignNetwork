@@ -540,6 +540,9 @@ class NeuralDesignNetwork:
                 ))
 
                 offset += layout_size
+
+                if k_idx >= 5:
+                    break
         
         else:
             # when not traing
