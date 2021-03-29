@@ -79,9 +79,21 @@ class NeuralDesignNetwork:
         # define training parameters
         self.iter_cnt = 0
 
+    @staticmethod
+    def KL_divergence(mu, var, mu_prior, var_prior):
+        mu = tf.concat(mu, axis=0)
+        var = tf.concat(var, axis=0)
+        mu_prior = tf.zeros_like(mu)
+        var_prior = tf.ones_like(var)
+        sigma = tf.math.exp(.5 * var)
+        sigma_prior = tf.math.exp(.5 * var_prior)
+        KL_loss = tf.math.log(sigma_prior / (sigma + 1e-8)) + (tf.math.pow(sigma, 2) + tf.math.pow(mu - mu_prior, 2)) / (2 * tf.math.pow(sigma_prior, 2)) - .5
+        KL_loss = tf.math.reduce_sum(KL_loss)
+
+        return KL_loss
     
     # define loss
-    def relation_loss(self, pred_cls_gt, pred_cls_predicted, z):
+    def relation_loss(self, pred_cls_gt, pred_cls_predicted, mu, var):
         cls_loss = keras.losses.CategoricalCrossentropy()(pred_cls_gt, pred_cls_predicted)
         
         # TODO:
@@ -93,9 +105,7 @@ class NeuralDesignNetwork:
         # here i try to sample some data from N(0, 1)
         # then calculate discrete KL divergence
         # i'm not sure if this is correct
-        normal_0_1 = tfp.distributions.Normal(loc=0., scale=1.)
-        sample_from_normal_0_1 = normal_0_1.sample(sample_shape=(z.shape))
-        KL_loss = keras.losses.KLDivergence()(sample_from_normal_0_1 ,z)
+        KL_loss = self.KL_divergence(mu, var, mu_prior, var_prior)
 
         return self.config['lambda_cls'] * cls_loss + self.config['lambda_kl_2'] * KL_loss
 
@@ -104,14 +114,7 @@ class NeuralDesignNetwork:
         recon_loss = tf.keras.losses.MeanAbsoluteError()(bb_gt, bb_predicted)
 
         # KL loss can be calculated according to mu and var
-        mu = tf.concat(mu, axis=0)
-        var = tf.concat(var, axis=0)
-        mu_prior = tf.concat(mu_prior, axis=0)
-        var_prior = tf.concat(var_prior, axis=0)
-        sigma = tf.math.exp(.5 * var)
-        sigma_prior = tf.math.exp(.5 * var_prior)
-        KL_loss = tf.math.log(sigma_prior / (sigma + 1e-8)) + (tf.math.pow(sigma, 2) + tf.math.pow(mu - mu_prior, 2)) / (2 * tf.math.pow(sigma_prior, 2)) - .5
-        KL_loss = tf.math.reduce_sum(KL_loss)
+        KL_loss = self.KL_divergence(mu, var, mu_prior, var_prior)
 
         return self.config['lambda_recon'] * recon_loss * bb_gt.shape[0] + self.config['lambda_kl_1'] * KL_loss
 
@@ -396,42 +399,43 @@ class NeuralDesignNetwork:
             """
             start sampling
             """
-            for idx in range(4):
-                objs, boxes, pos_triples_gt = self.fetch_one_data(dataset=sample_dataset)
+            if self.iter_cnt % int(config['sample_every']) == 0:
+                for idx in range(4):
+                    objs, boxes, pos_triples_gt = self.fetch_one_data(dataset=sample_dataset)
 
-                result = self.run_step(config, objs, boxes, pos_triples_gt, training=False)
-                
-                pred_boxes = result['pred_boxes']
-                pred_boxes_refine = result['pred_boxes_refine']
-                gt_pos_cls = result['gt_pos_cls']
-                pred_pos_cls = result['pred_pos_cls']
+                    result = self.run_step(config, objs, boxes, pos_triples_gt, training=False)
+                    
+                    pred_boxes = result['pred_boxes']
+                    pred_boxes_refine = result['pred_boxes_refine']
+                    gt_pos_cls = result['gt_pos_cls']
+                    pred_pos_cls = result['pred_pos_cls']
 
-                self.draw_boxes(
-                    objs,
-                    pred_boxes, 
-                    os.path.join(
-                        self.config['train_sample_dir'], 'train_%d_%d_predicted.png' 
-                        % (self.iter_cnt, idx)
+                    self.draw_boxes(
+                        objs,
+                        pred_boxes, 
+                        os.path.join(
+                            self.config['train_sample_dir'], 'train_%d_%d_predicted.png' 
+                            % (self.iter_cnt, idx)
+                        )
                     )
-                )
 
-                self.draw_boxes(
-                    objs,
-                    pred_boxes_refine,
-                    os.path.join(
-                        self.config['train_sample_dir'], 'train_%d_%d_refined.png' 
-                        % (self.iter_cnt, idx)
+                    self.draw_boxes(
+                        objs,
+                        pred_boxes_refine,
+                        os.path.join(
+                            self.config['train_sample_dir'], 'train_%d_%d_refined.png' 
+                            % (self.iter_cnt, idx)
+                        )
                     )
-                )
 
-                self.draw_boxes(
-                    objs,
-                    boxes,
-                    os.path.join(
-                        self.config['train_sample_dir'], 'train_%d_%d_gt.png' 
-                        % (self.iter_cnt, idx)
+                    self.draw_boxes(
+                        objs,
+                        boxes,
+                        os.path.join(
+                            self.config['train_sample_dir'], 'train_%d_%d_gt.png' 
+                            % (self.iter_cnt, idx)
+                        )
                     )
-                )
 
 
             self.iter_cnt += 1
@@ -465,8 +469,8 @@ class NeuralDesignNetwork:
                 pred_gt_one_hot = tf.one_hot(pos_pred_gt, depth=len(self.vocab['pos_pred_name_to_idx']))
                 step_result['gt_pos_cls'] = pred_gt_one_hot
                 # get latent variable of G_gt
-                z = tf.concat([result['obj_vecs_with_gt'], result['pred_vecs_with_gt']], axis=0)
-                pos_loss = self.relation_loss(pred_gt_one_hot, result['pred_cls'], z)
+                # z = tf.concat([result['obj_vecs_with_gt'], result['pred_vecs_with_gt']], axis=0)
+                pos_loss = self.relation_loss(pred_gt_one_hot, result['pred_cls'], result['z_mu'], result['z_var'])
                 step_result['pos_loss'] = pos_loss
                 step_result['pred_pos_cls'] = result['pred_cls']
 

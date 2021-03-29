@@ -117,7 +117,7 @@ class NDNGeneration(keras.Model):
                 temp_new_obj_vecs = self.g_update_embedding([temp_obj_vecs, tf.convert_to_tensor(temp_bb)], training=training)
                 temp_new_obj_vecs, temp_new_pred_vecs = self.g_update(temp_new_obj_vecs, temp_pred_vecs, tf.stack([temp_s_idx, temp_o_idx], axis=1), training=training)
 
-                c_k = tf.reduce_mean(tf.concat([temp_new_obj_vecs, temp_pred_vecs], axis=0), axis=0)
+                c_k = tf.reduce_mean(tf.concat([temp_new_obj_vecs, temp_new_pred_vecs], axis=0), axis=0)
 
                 if training:
                     temp_boxes = tf.expand_dims(boxes[k + obj_offset], axis=0)

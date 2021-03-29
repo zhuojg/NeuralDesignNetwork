@@ -64,10 +64,10 @@ if __name__ == '__main__':
             'lambda_recon': config.getfloat('lambda_recon'),
             'lambda_kl_1': config.getfloat('lambda_kl_1'),
             'lambda_kl_2': config.getfloat('lambda_kl_2'),
-            
             'max_iteration_number': int(config.getfloat('max_iteration_number')),
             'checkpoint_every': int(config.getfloat('checkpoint_every')), 
             'checkpoint_max_to_keep': config.getint('checkpoint_max_to_keep'),
+            'sample_every': int(config.getint('sample_every'))
         }
 
         training_config = {**training_config, **model_config}
