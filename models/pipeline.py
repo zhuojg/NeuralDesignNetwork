@@ -31,12 +31,12 @@ class NeuralDesignNetwork:
         self.vocab = {
             'object_name_to_idx': {},
             'pos_pred_name_to_idx': {},
-            'size_pred_name_to_idx': {}
+            # 'size_pred_name_to_idx': {}
         }
 
         self.vocab['object_name_to_idx']['__image__'] = 0
         self.vocab['pos_pred_name_to_idx']['__in_image__'] = 0
-        self.vocab['size_pred_name_to_idx']['__in_image__'] = 0
+        # self.vocab['size_pred_name_to_idx']['__in_image__'] = 0
 
         for idx, item in enumerate(category_list):
             self.vocab['object_name_to_idx'][item] = idx + 1
@@ -44,19 +44,19 @@ class NeuralDesignNetwork:
         for idx, item in enumerate(pos_relation_list):
             self.vocab['pos_pred_name_to_idx'][item] = idx + 1
         
-        for idx, item in enumerate(size_relation_list):
-            self.vocab['size_pred_name_to_idx'][item] = idx + 1
+        # for idx, item in enumerate(size_relation_list):
+        #     self.vocab['size_pred_name_to_idx'][item] = idx + 1
 
         # build GCN as described in supplementary material
         self.pos_relation = NDNRelation(category_list=self.vocab['object_name_to_idx'].keys(), relation_list=self.vocab['pos_pred_name_to_idx'].keys())
-        self.size_relation = NDNRelation(category_list=self.vocab['object_name_to_idx'].keys(), relation_list=self.vocab['size_pred_name_to_idx'])
+        # self.size_relation = NDNRelation(category_list=self.vocab['object_name_to_idx'].keys(), relation_list=self.vocab['size_pred_name_to_idx'])
 
         self.generation = NDNGeneration()
         self.refinement = NDNRefinement()
 
         self.obj_embedding = keras.layers.Embedding(input_dim=len(self.vocab['object_name_to_idx']), output_dim=64)
         self.pos_pred_embedding = keras.layers.Embedding(input_dim=len(self.vocab['pos_pred_name_to_idx']), output_dim=64)
-        self.size_pred_embedding = keras.layers.Embedding(input_dim=len(self.vocab['size_pred_name_to_idx']), output_dim=64)
+        # self.size_pred_embedding = keras.layers.Embedding(input_dim=len(self.vocab['size_pred_name_to_idx']), output_dim=64)
         # define optimizer
         self.relation_optimizer = keras.optimizers.Adam(learning_rate=config['learning_rate'], beta_1=config['beta_1'], beta_2=config['beta_2'])
         self.generation_optimizer = keras.optimizers.Adam(learning_rate=config['learning_rate'], beta_1=config['beta_1'], beta_2=config['beta_2'])
@@ -66,9 +66,9 @@ class NeuralDesignNetwork:
         self.ckpt = tf.train.Checkpoint(
             obj_embedding=self.obj_embedding,
             pos_pred_embedding=self.pos_pred_embedding,
-            size_pred_embedding=self.size_pred_embedding,
+            # size_pred_embedding=self.size_pred_embedding,
             pos_relation=self.pos_relation,
-            size_relation=self.size_relation,
+            # size_relation=self.size_relation,
             generation=self.generation,
             refinement=self.refinement,
             relation_optimizer=self.relation_optimizer,
@@ -161,7 +161,7 @@ class NeuralDesignNetwork:
         # p: index of relationship
         # o: index in all_obj
         all_pos_triples = []
-        all_size_triples = []
+        # all_size_triples = []
 
         for item in batch_data:
             layout = json.load(open(item))
@@ -244,35 +244,36 @@ class NeuralDesignNetwork:
 
                     # calculate size relationship
                     # now we have 3 kinds of size relationship
-                    if sw > ow and sh > oh:
-                        p = 'bigger'
-                    elif sw < ow and sh < oh:
-                        p = 'smaller'
-                    elif sw * sh > ow * oh:
-                        p = 'bigger'
-                    elif sw * sh < ow * oh:
-                        p = 'smaller'
-                    else:
-                        p = 'same'
-                    p = self.vocab['size_pred_name_to_idx'][p]
-                    all_size_triples.append([s + obj_offset, p, o + obj_offset])
+                    # if sw > ow and sh > oh:
+                    #     p = 'bigger'
+                    # elif sw < ow and sh < oh:
+                    #     p = 'smaller'
+                    # elif sw * sh > ow * oh:
+                    #     p = 'bigger'
+                    # elif sw * sh < ow * oh:
+                    #     p = 'smaller'
+                    # else:
+                    #     p = 'same'
+                    # p = self.vocab['size_pred_name_to_idx'][p]
+                    # all_size_triples.append([s + obj_offset, p, o + obj_offset])
 
             # add __in_image__ triples
             O = len(cur_obj)
             pos_in_image = self.vocab['pos_pred_name_to_idx']['__in_image__']
-            size_in_image = self.vocab['size_pred_name_to_idx']['__in_image__']
+            # size_in_image = self.vocab['size_pred_name_to_idx']['__in_image__']
             for i in range(O - 1):
                 all_pos_triples.append([i + obj_offset, pos_in_image, O - 1 + obj_offset])
-                all_size_triples.append([i + obj_offset, size_in_image, O - 1 + obj_offset])
+                # all_size_triples.append([i + obj_offset, size_in_image, O - 1 + obj_offset])
 
             obj_offset += len(cur_obj)
         
         all_obj = tf.convert_to_tensor(all_obj)
         all_boxes = tf.convert_to_tensor(all_boxes)
         all_pos_triples = tf.convert_to_tensor(all_pos_triples)
-        all_size_triples = tf.convert_to_tensor(all_size_triples)
+        # all_size_triples = tf.convert_to_tensor(all_size_triples)
             
-        return all_obj, all_boxes, all_pos_triples, all_size_triples
+        # return all_obj, all_boxes, all_pos_triples, all_size_triples
+        return all_obj, all_boxes, all_pos_triples
 
     def test(self, config, checkpoint_path, output_dir):
         sample_dataset = tf.data.Dataset.list_files(os.path.join(config['data_dir'], '*.json'))
@@ -281,9 +282,10 @@ class NeuralDesignNetwork:
         self.ckpt.restore(checkpoint_path)
 
         for idx in range(10):
-            objs, boxes, pos_triples_gt, size_triples_gt = self.fetch_one_data(dataset=sample_dataset)
+            # objs, boxes, pos_triples_gt, size_triples_gt = self.fetch_one_data(dataset=sample_dataset)
+            objs, boxes, pos_triples_gt = self.fetch_one_data(dataset=sample_dataset)
 
-            result = self.run_step(config, objs, boxes, pos_triples_gt, size_triples_gt, training=False)
+            result = self.run_step(config, objs, boxes, pos_triples_gt, training=False)
 
             pred_boxes = result['pred_boxes_refine']
 
@@ -315,34 +317,35 @@ class NeuralDesignNetwork:
 
         # define metrics
         pos_relation_acc = keras.metrics.CategoricalAccuracy()
-        size_relation_acc = keras.metrics.CategoricalAccuracy()
+        # size_relation_acc = keras.metrics.CategoricalAccuracy()
         recon_loss = keras.metrics.MeanAbsoluteError()
 
         # start training
         while self.iter_cnt < config['max_iteration_number']:
-            objs, boxes, pos_triples_gt, size_triples_gt = self.fetch_one_data(dataset=train_dataset)
+            # objs, boxes, pos_triples_gt, size_triples_gt = self.fetch_one_data(dataset=train_dataset)
+            objs, boxes, pos_triples_gt = self.fetch_one_data(dataset=train_dataset)
 
-            result = self.run_step(config, objs, boxes, pos_triples_gt, size_triples_gt, training=True)
+            result = self.run_step(config, objs, boxes, pos_triples_gt, training=True)
 
             pos_loss = result['pos_loss']
-            size_loss = result['size_loss']
+            # size_loss = result['size_loss']
             gen_loss = result['gen_loss']
             refine_loss = result['refine_loss']
             pred_boxes = result['pred_boxes']
             pred_boxes_refine = result['pred_boxes_refine']
             gt_pos_cls = result['gt_pos_cls']
             pred_pos_cls = result['pred_pos_cls']
-            gt_size_cls = result['gt_size_cls']
-            pred_size_cls = result['pred_size_cls']
+            # gt_size_cls = result['gt_size_cls']
+            # pred_size_cls = result['pred_size_cls']
 
             pos_relation_acc.update_state(gt_pos_cls, pred_pos_cls)
-            size_relation_acc.update_state(gt_size_cls, pred_size_cls)
+            # size_relation_acc.update_state(gt_size_cls, pred_size_cls)
             recon_loss.update_state(boxes, pred_boxes_refine)
 
-            print('Step: %d. Pos Loss: %f. Size Loss: %f. Position Classification Acc: %f. Size Classification Acc: %f' 
+            print('Step: %d. Pos Loss: %f. Position Classification Acc: %f.' 
             % 
-            (self.iter_cnt, pos_loss.numpy(), size_loss.numpy(), pos_relation_acc.result().numpy(), size_relation_acc.result()))
-
+            (self.iter_cnt, pos_loss.numpy(), pos_relation_acc.result().numpy()))
+            
             print('Step: %d. Gen Loss: %f. Recon Loss: %f.'
             %
             (self.iter_cnt, gen_loss.numpy(), recon_loss.result().numpy()))
@@ -352,9 +355,7 @@ class NeuralDesignNetwork:
             if self.save:
                 with train_summary_writer.as_default():
                     tf.summary.scalar('pos_loss', pos_loss, step=self.iter_cnt)
-                    tf.summary.scalar('size_loss', size_loss, step=self.iter_cnt)
                     tf.summary.scalar('pos_relation_acc', pos_relation_acc.result(), step=self.iter_cnt)
-                    tf.summary.scalar('size_relation_acc', size_relation_acc.result(), step=self.iter_cnt)
 
                     tf.summary.scalar('gen_loss', gen_loss, step=self.iter_cnt)
                     tf.summary.scalar('recon_loss', recon_loss.result(), step=self.iter_cnt)
@@ -362,7 +363,6 @@ class NeuralDesignNetwork:
                     tf.summary.scalar('refine_loss', refine_loss, step=self.iter_cnt)
             
             pos_relation_acc.reset_states()
-            size_relation_acc.reset_states()
             recon_loss.reset_states()
 
             if self.save and (self.iter_cnt + 1) % config['checkpoint_every'] == 0:
@@ -372,49 +372,39 @@ class NeuralDesignNetwork:
             """
             start testing
             """
-            objs, boxes, pos_triples_gt, size_triples_gt = self.fetch_one_data(dataset=test_dataset)
+            objs, boxes, pos_triples_gt = self.fetch_one_data(dataset=test_dataset)
 
-            result = self.run_step(config, objs, boxes, pos_triples_gt, size_triples_gt, training=False)
+            result = self.run_step(config, objs, boxes, pos_triples_gt, training=False)
             
             pred_boxes = result['pred_boxes']
             pred_boxes_refine = result['pred_boxes_refine']
             gt_pos_cls = result['gt_pos_cls']
             pred_pos_cls = result['pred_pos_cls']
-            gt_size_cls = result['gt_size_cls']
-            pred_size_cls = result['pred_size_cls']
 
             pos_relation_acc.update_state(gt_pos_cls, pred_pos_cls)
-            size_relation_acc.update_state(gt_size_cls, pred_size_cls)
             recon_loss.update_state(boxes, pred_boxes_refine)
 
             if self.save:
                 with test_summary_writer.as_default():
                     # tf.summary.scalar('pos_loss', pos_loss, step=self.iter_cnt)
-                    # tf.summary.scalar('size_loss', size_loss, step=self.iter_cnt)
                     tf.summary.scalar('pos_relation_acc', pos_relation_acc.result(), step=self.iter_cnt)
-                    tf.summary.scalar('size_relation_acc', size_relation_acc.result(), step=self.iter_cnt)
-
                     # tf.summary.scalar('gen_loss', gen_loss, step=self.iter_cnt)
                     tf.summary.scalar('recon_loss', recon_loss.result(), step=self.iter_cnt)
             
             pos_relation_acc.reset_states()
-            size_relation_acc.reset_states()
-            recon_loss.reset_states()
 
             """
             start sampling
             """
             for idx in range(4):
-                objs, boxes, pos_triples_gt, size_triples_gt = self.fetch_one_data(dataset=sample_dataset)
+                objs, boxes, pos_triples_gt = self.fetch_one_data(dataset=sample_dataset)
 
-                result = self.run_step(config, objs, boxes, pos_triples_gt, size_triples_gt, training=False)
+                result = self.run_step(config, objs, boxes, pos_triples_gt, training=False)
                 
                 pred_boxes = result['pred_boxes']
                 pred_boxes_refine = result['pred_boxes_refine']
                 gt_pos_cls = result['gt_pos_cls']
                 pred_pos_cls = result['pred_pos_cls']
-                gt_size_cls = result['gt_size_cls']
-                pred_size_cls = result['pred_size_cls']
 
                 self.draw_boxes(
                     objs,
@@ -446,11 +436,10 @@ class NeuralDesignNetwork:
 
             self.iter_cnt += 1
 
-    def run_step(self, config, objs, boxes, pos_triples_gt, size_triples_gt, training=True):
+    def run_step(self, config, objs, boxes, pos_triples_gt, training=True):
         step_result = {}
 
         s, pos_pred_gt, o = self.split_graph(objs, pos_triples_gt)
-        _, size_pred_gt, o = self.split_graph(objs, size_triples_gt)
 
         # randomly mask to generate training data
         pos_pred = pos_pred_gt.numpy()
@@ -459,14 +448,7 @@ class NeuralDesignNetwork:
                 if random.random() <= config['mask_rate']:
                     pos_pred[idx] = len(self.vocab['pos_pred_name_to_idx']) - 1
 
-        size_pred = size_pred_gt.numpy()
-        for idx, _ in enumerate(size_pred):
-            if size_pred[idx] != 0:
-                if random.random() <= config['mask_rate']:
-                    size_pred[idx] = len(self.vocab['size_pred_name_to_idx']) - 1
-
         pos_pred = tf.convert_to_tensor(pos_pred)
-        size_pred = tf.convert_to_tensor(size_pred)
 
         # train relation
         if training:
@@ -495,36 +477,9 @@ class NeuralDesignNetwork:
             self.relation_optimizer.apply_gradients(
                 zip(gradients, train_var)
             )
-
-            # train size relation
-            with tf.GradientTape() as tape:
-                # TODO:
-                # use the same obj embedding here
-                # but when to update the weight of obj embedding is not sure
-                obj_vecs = self.obj_embedding(objs, training=True)
-                pred_vecs = self.size_pred_embedding(size_pred, training=True)
-                pred_gt_vecs = self.size_pred_embedding(size_pred_gt, training=True)
-
-                result = self.size_relation(obj_vecs, pred_gt_vecs, s, o, pred_vecs=pred_vecs, training=True)
-
-                pred_gt_one_hot = tf.one_hot(size_pred_gt, depth=len(self.vocab['size_pred_name_to_idx']))
-                step_result['gt_size_cls'] = pred_gt_one_hot
-                z = tf.concat([result['obj_vecs_with_gt'], result['pred_vecs_with_gt']], axis=0)
-                size_loss = self.relation_loss(pred_gt_one_hot, result['pred_cls'], z)
-                step_result['size_loss'] = size_loss
-                step_result['pred_size_cls'] = result['pred_cls']
-
-            train_var = self.size_relation.trainable_variables \
-                        + self.obj_embedding.trainable_variables + self.size_pred_embedding.trainable_variables
-            gradients = tape.gradient(size_loss, train_var)
-
-            self.relation_optimizer.apply_gradients(
-                zip(gradients, train_var)
-            )
         
         else:
             pos_pred = tf.ones_like(pos_pred_gt) * (len(self.vocab['pos_pred_name_to_idx']) - 1)
-            size_pred = tf.ones_like(size_pred_gt) * (len(self.vocab['size_pred_name_to_idx']) - 1)
 
             obj_vecs = self.obj_embedding(objs, training=False)
 
@@ -534,30 +489,15 @@ class NeuralDesignNetwork:
             step_result['gt_pos_cls'] = pred_gt_one_hot
             step_result['pred_pos_cls'] = result['pred_cls']
 
-            pred_vecs = self.size_pred_embedding(size_pred, training=False)
-            result = self.size_relation(obj_vecs, pred_vecs, s, o, training=False)
-            pred_gt_one_hot = tf.one_hot(size_pred_gt, depth=len(self.vocab['size_pred_name_to_idx']))
-            step_result['gt_size_cls'] = pred_gt_one_hot
-            step_result['pred_size_cls'] = result['pred_cls']
-
-
-
         # train generation
         s, pos_pred, o = self.split_graph(objs, pos_triples_gt)
-        _, size_pred, _ = self.split_graph(objs, size_triples_gt)
         
         if training:
             with tf.GradientTape() as tape:
                 obj_vecs = self.obj_embedding(objs, training=True)
                 pos_pred_vecs = self.pos_pred_embedding(pos_pred, training=True)
-                size_pred_vecs = self.size_pred_embedding(size_pred, training=True)
 
-                # concat pos_pred and size_pred
-                pred_vecs = tf.concat([pos_pred_vecs, size_pred_vecs], axis=0)
-                s_idx = tf.concat([s, s], axis=0)
-                o_idx = tf.concat([o, o], axis=0)
-
-                result = self.generation(objs, obj_vecs, pred_vecs, boxes, s_idx, o_idx, training=True)
+                result = self.generation(objs, obj_vecs, pos_pred_vecs, boxes, s, o, training=True)
                 step_result['pred_boxes'] = result['pred_boxes']
                 # `result` contains output of k iterations
                 gen_loss = self.generation_loss(
@@ -611,14 +551,8 @@ class NeuralDesignNetwork:
 
             obj_vecs = self.obj_embedding(objs, training=False)
             pos_pred_vecs = self.pos_pred_embedding(pos_pred, training=False)
-            size_pred_vecs = self.size_pred_embedding(size_pred, training=False)
 
-            # concat pos_pred and size_pred
-            pred_vecs = tf.concat([pos_pred_vecs, size_pred_vecs], axis=0)
-            s_idx = tf.concat([s, s], axis=0)
-            o_idx = tf.concat([o, o], axis=0)
-
-            result = self.generation(objs, obj_vecs, pred_vecs, boxes, s_idx, o_idx, training=False)
+            result = self.generation(objs, obj_vecs, pos_pred_vecs, boxes, s, o, training=False)
             step_result['pred_boxes'] = tf.convert_to_tensor(result['pred_boxes'])
 
 
@@ -627,15 +561,9 @@ class NeuralDesignNetwork:
             with tf.GradientTape() as tape:
                 obj_vecs = self.obj_embedding(objs, training=True)
                 pos_pred_vecs = self.pos_pred_embedding(pos_pred, training=True)
-                size_pred_vecs = self.size_pred_embedding(size_pred, training=True)
-
-                # concat pos_pred and size_pred
-                pred_vecs = tf.concat([pos_pred_vecs, size_pred_vecs], axis=0)
-                s_idx = tf.concat([s, s], axis=0)
-                o_idx = tf.concat([o, o], axis=0)
 
                 boxes_adjust = boxes + tf.random.uniform(shape=boxes.shape, minval=-0.05, maxval=0.05)
-                result = self.refinement(obj_vecs, pred_vecs, boxes_adjust, s_idx, o_idx, training=True)
+                result = self.refinement(obj_vecs, pos_pred_vecs, boxes_adjust, s, o, training=True)
 
                 step_result['pred_boxes_refine'] = result['bb_predicted']
 
@@ -654,18 +582,11 @@ class NeuralDesignNetwork:
             # when not traing
             # use the relationship predicted by previous model
             pos_pred = tf.math.argmax(step_result['pred_pos_cls'], axis=1)
-            size_pred = tf.math.argmax(step_result['pred_size_cls'], axis=1)
 
             obj_vecs = self.obj_embedding(objs, training=False)
             pos_pred_vecs = self.pos_pred_embedding(pos_pred, training=False)
-            size_pred_vecs = self.size_pred_embedding(size_pred, training=False)
 
-            # concat pos_pred and size_pred
-            pred_vecs = tf.concat([pos_pred_vecs, size_pred_vecs], axis=0)
-            s_idx = tf.concat([s, s], axis=0)
-            o_idx = tf.concat([o, o], axis=0)
-
-            result = self.refinement(obj_vecs, pred_vecs, step_result['pred_boxes'], s_idx, o_idx, training=False)
+            result = self.refinement(obj_vecs, pos_pred_vecs, step_result['pred_boxes'], s, o, training=False)
             step_result['pred_boxes_refine'] = result['bb_predicted']
 
         return step_result
