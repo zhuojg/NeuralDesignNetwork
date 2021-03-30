@@ -34,6 +34,7 @@ if __name__ == '__main__':
         'test_data_dir': config['test_data_dir'],
         'sample_data_dir': config['sample_data_dir'],
         'mask_rate': config.getfloat('mask_rate'),
+        'part': args.part
     }
 
     if args.train:

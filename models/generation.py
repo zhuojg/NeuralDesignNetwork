@@ -92,7 +92,7 @@ class NDNGeneration(keras.Model):
                 # these N - 1 elements are all connected to each other
                 # so we have (N-1)(N-2) preds
                 # for __image__ item, it is connected to all other N - 1 elements
-                # so the final pred number is (N - 1)(N- 2) + (N - 1) = (N - 1)^2
+                # so the final pred number is (N - 1)(N - 2) + (N - 1) = (N - 1)^2
                 layout_pred_size_list.append((layout_size_list[-1] - 1) ** 2)
         
         # simulate k iteration

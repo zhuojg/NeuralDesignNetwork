@@ -87,7 +87,7 @@ class NeuralDesignNetwork:
         var_prior = tf.ones_like(var)
         sigma = tf.math.exp(.5 * var)
         sigma_prior = tf.math.exp(.5 * var_prior)
-        KL_loss = tf.math.log(sigma_prior / (sigma + 1e-8)) + (tf.math.pow(sigma, 2) + tf.math.pow(mu - mu_prior, 2)) / (2 * tf.math.pow(sigma_prior, 2)) - .5
+        KL_loss = tf.math.log(sigma_prior / (sigma + 1e-8)) + (tf.math.exp(sigma) + tf.math.pow(mu - mu_prior, 2)) / (2 * tf.math.exp(sigma_prior)) - .5
         KL_loss = tf.math.reduce_sum(KL_loss)
 
         return KL_loss
@@ -95,16 +95,6 @@ class NeuralDesignNetwork:
     # define loss
     def relation_loss(self, pred_cls_gt, pred_cls_predicted, mu, var):
         cls_loss = keras.losses.CategoricalCrossentropy()(pred_cls_gt, pred_cls_predicted)
-        
-        # TODO:
-        # this part is a little confusing
-        # according to paper, we need to calculate KL divergence of z and N(0, 1)
-        # where `z` is calculated from g_p(G)
-        # so we cannot get distribution of z
-
-        # here i try to sample some data from N(0, 1)
-        # then calculate discrete KL divergence
-        # i'm not sure if this is correct
         KL_loss = self.KL_divergence(mu, var, 0, 1)
 
         return self.config['lambda_cls'] * cls_loss + self.config['lambda_kl_2'] * KL_loss
@@ -288,12 +278,15 @@ class NeuralDesignNetwork:
             # objs, boxes, pos_triples_gt, size_triples_gt = self.fetch_one_data(dataset=sample_dataset)
             objs, boxes, pos_triples_gt = self.fetch_one_data(dataset=sample_dataset)
 
-            result = self.run_step(config, objs, boxes, pos_triples_gt, training=False)
-
-            pred_boxes = result['pred_boxes_refine']
-
+            result = self.run_step(config, objs, boxes, pos_triples_gt, config['part'], training=False)
+            
+            # this 2 results, use the predicted relation to generate
+            # self.draw_boxes(objs, result['pred_boxes_use_predicted'], os.path.join(output_dir, 'test_%d_predicted_with_relation.png' % idx))
+            # self.draw_boxes(objs, result['pred_boxes_refine_use_predicted'], os.path.join(output_dir, 'test_%d_refine_with_relaton.png' % idx))
+            
+            # this 2 results, use the gt relation to generate
             self.draw_boxes(objs, result['pred_boxes'], os.path.join(output_dir, 'test_%d_predicted.png' % idx))
-            self.draw_boxes(objs, pred_boxes, os.path.join(output_dir, 'test_%d_refine.png' % idx))
+            self.draw_boxes(objs, result['pred_boxes_refine'], os.path.join(output_dir, 'test_%d_refine.png' % idx))
             self.draw_boxes(objs, boxes, os.path.join(output_dir, 'test_%d_gt.png' % idx))
 
 
@@ -328,46 +321,46 @@ class NeuralDesignNetwork:
             # objs, boxes, pos_triples_gt, size_triples_gt = self.fetch_one_data(dataset=train_dataset)
             objs, boxes, pos_triples_gt = self.fetch_one_data(dataset=train_dataset)
 
-            result = self.run_step(config, objs, boxes, pos_triples_gt, training=True)
+            result = self.run_step(config, objs, boxes, pos_triples_gt, part=config['part'], training=True)
 
-            pos_loss = result['pos_loss']
-            # size_loss = result['size_loss']
-            gen_loss = result['gen_loss']
-            refine_loss = result['refine_loss']
-            pred_boxes = result['pred_boxes']
-            pred_boxes_refine = result['pred_boxes_refine']
-            gt_pos_cls = result['gt_pos_cls']
-            pred_pos_cls = result['pred_pos_cls']
-            # gt_size_cls = result['gt_size_cls']
-            # pred_size_cls = result['pred_size_cls']
-
-            pos_relation_acc.update_state(gt_pos_cls, pred_pos_cls)
-            # size_relation_acc.update_state(gt_size_cls, pred_size_cls)
-            recon_loss.update_state(boxes, pred_boxes_refine)
-
-            print('Step: %d. Pos Loss: %f. Position Classification Acc: %f.' 
-            % 
-            (self.iter_cnt, pos_loss.numpy(), pos_relation_acc.result().numpy()))
+            if config['part'] == 'relation':
+                pos_loss = result['pos_loss']
+                gt_pos_cls = result['gt_pos_cls']
+                pred_pos_cls = result['pred_pos_cls']
+                pos_relation_acc.update_state(gt_pos_cls, pred_pos_cls)
+                print('Step: %d. Pos Loss: %f. Position Classification Acc: %f.' 
+                % 
+                (self.iter_cnt, pos_loss.numpy(), pos_relation_acc.result().numpy()))
             
-            print('Step: %d. Gen Loss: %f. Recon Loss: %f.'
-            %
-            (self.iter_cnt, gen_loss.numpy(), recon_loss.result().numpy()))
+            if config['part'] == 'generation':
+                gen_loss = result['gen_loss']
+                refine_loss = result['refine_loss']
+                pred_boxes = result['pred_boxes']
+                pred_boxes_refine = result['pred_boxes_refine']
+                recon_loss.update_state(boxes, pred_boxes_refine)
 
-            print('Step: %d. Refine Loss: %f.' % (self.iter_cnt, refine_loss.numpy()))
+                print('Step: %d. Gen Loss: %f. Recon Loss: %f.'
+                %
+                (self.iter_cnt, gen_loss.numpy(), recon_loss.result().numpy()))
 
+                print('Step: %d. Refine Loss: %f.' % (self.iter_cnt, refine_loss.numpy()))
+            
             if self.save:
                 with train_summary_writer.as_default():
-                    tf.summary.scalar('pos_loss', pos_loss, step=self.iter_cnt)
-                    tf.summary.scalar('pos_relation_acc', pos_relation_acc.result(), step=self.iter_cnt)
+                    if config['part'] == 'relation':
+                        tf.summary.scalar('pos_loss', pos_loss, step=self.iter_cnt)
+                        tf.summary.scalar('pos_relation_acc', pos_relation_acc.result(), step=self.iter_cnt)
 
-                    tf.summary.scalar('gen_loss', gen_loss, step=self.iter_cnt)
-                    tf.summary.scalar('recon_loss', recon_loss.result(), step=self.iter_cnt)
+                        pos_relation_acc.reset_states()
 
-                    tf.summary.scalar('refine_loss', refine_loss, step=self.iter_cnt)
+                    if config['part'] == 'generation':
+                        tf.summary.scalar('gen_loss', gen_loss, step=self.iter_cnt)
+                        tf.summary.scalar('recon_loss', recon_loss.result(), step=self.iter_cnt)
+                        tf.summary.scalar('refine_loss', refine_loss, step=self.iter_cnt)
+
+                        recon_loss.reset_states()
             
-            pos_relation_acc.reset_states()
-            recon_loss.reset_states()
-
+            
             if self.save and (self.iter_cnt + 1) % config['checkpoint_every'] == 0:
                 ckpt_manager.save()
                 print('Checkpoint saved.')
@@ -377,24 +370,29 @@ class NeuralDesignNetwork:
             """
             objs, boxes, pos_triples_gt = self.fetch_one_data(dataset=test_dataset)
 
-            result = self.run_step(config, objs, boxes, pos_triples_gt, training=False)
+            result = self.run_step(config, objs, boxes, pos_triples_gt, part=config['part'], training=False)
             
-            pred_boxes = result['pred_boxes']
-            pred_boxes_refine = result['pred_boxes_refine']
-            gt_pos_cls = result['gt_pos_cls']
-            pred_pos_cls = result['pred_pos_cls']
-
-            pos_relation_acc.update_state(gt_pos_cls, pred_pos_cls)
-            recon_loss.update_state(boxes, pred_boxes_refine)
+            if config['part'] == 'relation':
+                gt_pos_cls = result['gt_pos_cls']
+                pred_pos_cls = result['pred_pos_cls']
+                pos_relation_acc.update_state(gt_pos_cls, pred_pos_cls)
+            
+            if config['part'] == 'generation':
+                pred_boxes = result['pred_boxes']
+                pred_boxes_refine = result['pred_boxes_refine']
+            
+                recon_loss.update_state(boxes, pred_boxes_refine)
 
             if self.save:
                 with test_summary_writer.as_default():
-                    # tf.summary.scalar('pos_loss', pos_loss, step=self.iter_cnt)
-                    tf.summary.scalar('pos_relation_acc', pos_relation_acc.result(), step=self.iter_cnt)
-                    # tf.summary.scalar('gen_loss', gen_loss, step=self.iter_cnt)
-                    tf.summary.scalar('recon_loss', recon_loss.result(), step=self.iter_cnt)
+                    if config['part'] == 'relation':
+                        tf.summary.scalar('pos_relation_acc', pos_relation_acc.result(), step=self.iter_cnt)
+                        pos_relation_acc.reset_states()
+
+                    if config['part'] == 'generation':
+                        tf.summary.scalar('recon_loss', recon_loss.result(), step=self.iter_cnt)
+                        recon_loss.reset_states()
             
-            pos_relation_acc.reset_states()
 
             """
             start sampling
@@ -403,44 +401,47 @@ class NeuralDesignNetwork:
                 for idx in range(4):
                     objs, boxes, pos_triples_gt = self.fetch_one_data(dataset=sample_dataset)
 
-                    result = self.run_step(config, objs, boxes, pos_triples_gt, training=False)
+                    result = self.run_step(config, objs, boxes, pos_triples_gt, part=config['part'], training=False)
                     
-                    pred_boxes = result['pred_boxes']
-                    pred_boxes_refine = result['pred_boxes_refine']
-                    gt_pos_cls = result['gt_pos_cls']
-                    pred_pos_cls = result['pred_pos_cls']
+                    if config['part'] == 'relation':
+                        gt_pos_cls = result['gt_pos_cls']
+                        pred_pos_cls = result['pred_pos_cls']
+                    
+                    if config['part'] == 'generation':
+                        pred_boxes = result['pred_boxes']
+                        pred_boxes_refine = result['pred_boxes_refine']
 
-                    self.draw_boxes(
-                        objs,
-                        pred_boxes, 
-                        os.path.join(
-                            self.config['train_sample_dir'], 'train_%d_%d_predicted.png' 
-                            % (self.iter_cnt, idx)
+                        self.draw_boxes(
+                            objs,
+                            pred_boxes, 
+                            os.path.join(
+                                self.config['train_sample_dir'], 'train_%d_%d_predicted.png' 
+                                % (self.iter_cnt, idx)
+                            )
                         )
-                    )
 
-                    self.draw_boxes(
-                        objs,
-                        pred_boxes_refine,
-                        os.path.join(
-                            self.config['train_sample_dir'], 'train_%d_%d_refined.png' 
-                            % (self.iter_cnt, idx)
+                        self.draw_boxes(
+                            objs,
+                            pred_boxes_refine,
+                            os.path.join(
+                                self.config['train_sample_dir'], 'train_%d_%d_refined.png' 
+                                % (self.iter_cnt, idx)
+                            )
                         )
-                    )
 
-                    self.draw_boxes(
-                        objs,
-                        boxes,
-                        os.path.join(
-                            self.config['train_sample_dir'], 'train_%d_%d_gt.png' 
-                            % (self.iter_cnt, idx)
+                        self.draw_boxes(
+                            objs,
+                            boxes,
+                            os.path.join(
+                                self.config['train_sample_dir'], 'train_%d_%d_gt.png' 
+                                % (self.iter_cnt, idx)
+                            )
                         )
-                    )
 
 
             self.iter_cnt += 1
 
-    def run_step(self, config, objs, boxes, pos_triples_gt, training=True):
+    def run_step(self, config, objs, boxes, pos_triples_gt, part, training=True):
         step_result = {}
 
         s, pos_pred_gt, o = self.split_graph(objs, pos_triples_gt)
@@ -455,7 +456,7 @@ class NeuralDesignNetwork:
         pos_pred = tf.convert_to_tensor(pos_pred)
 
         # train relation
-        if training:
+        if training and config['part'] == 'relation':
             # train pos relation
             with tf.GradientTape() as tape:
                 # get embedding of obj and pred
@@ -482,7 +483,7 @@ class NeuralDesignNetwork:
                 zip(gradients, train_var)
             )
         
-        else:
+        elif config['part'] == 'relation':
             pos_pred = tf.ones_like(pos_pred_gt) * (len(self.vocab['pos_pred_name_to_idx']) - 1)
 
             obj_vecs = self.obj_embedding(objs, training=False)
@@ -496,7 +497,7 @@ class NeuralDesignNetwork:
         # train generation
         s, pos_pred, o = self.split_graph(objs, pos_triples_gt)
         
-        if training:
+        if training and config['part'] == 'generation':
             with tf.GradientTape() as tape:
                 obj_vecs = self.obj_embedding(objs, training=True)
                 pos_pred_vecs = self.pos_pred_embedding(pos_pred, training=True)
@@ -521,50 +522,52 @@ class NeuralDesignNetwork:
                 zip(gradients, train_var)
             )
 
-            layout_size_list = []
-            temp_layout = []
-            for item in objs.numpy():
-                if item != 0:
-                    temp_layout.append(item)
-                else:
-                    layout_size_list.append(len(temp_layout) + 1)
-                    temp_layout = []
-            
-            offset = 0
-            for k_idx, layout_size in enumerate(layout_size_list):
-                temp_objs = objs[offset : layout_size + offset]
-                temp_boxes = step_result['pred_boxes'][offset : layout_size + offset]
-                self.draw_boxes(temp_objs, temp_boxes, os.path.join(
-                    self.config['train_sample_dir'], 'training_%d_%d_predicted.png' % (self.iter_cnt, k_idx)
-                ))
+            # sample training results
+            if self.iter_cnt % int(config['sample_every']) == 0:
+                layout_size_list = []
+                temp_layout = []
+                for item in objs.numpy():
+                    if item != 0:
+                        temp_layout.append(item)
+                    else:
+                        layout_size_list.append(len(temp_layout) + 1)
+                        temp_layout = []
+                
+                offset = 0
+                for k_idx, layout_size in enumerate(layout_size_list):
+                    temp_objs = objs[offset : layout_size + offset]
+                    temp_boxes = step_result['pred_boxes'][offset : layout_size + offset]
+                    self.draw_boxes(temp_objs, temp_boxes, os.path.join(
+                        self.config['train_sample_dir'], 'training_%d_%d_predicted.png' % (self.iter_cnt, k_idx)
+                    ))
 
-                temp_boxes = boxes[offset : layout_size + offset]
-                self.draw_boxes(temp_objs, temp_boxes, os.path.join(
-                    self.config['train_sample_dir'], 'training_%d_%d_gt.png' % (self.iter_cnt, k_idx)
-                ))
+                    temp_boxes = boxes[offset : layout_size + offset]
+                    self.draw_boxes(temp_objs, temp_boxes, os.path.join(
+                        self.config['train_sample_dir'], 'training_%d_%d_gt.png' % (self.iter_cnt, k_idx)
+                    ))
 
-                offset += layout_size
+                    offset += layout_size
 
-                if k_idx >= 5:
-                    break
+                    if k_idx >= 5:
+                        break
         
-        else:
-            # when not traing
-            # use the relationship predicted by previous model
-            # TODO:
-            # now we not use preditced relation
-            # pos_pred = tf.math.argmax(step_result['pred_pos_cls'], axis=1)
-            # size_pred = tf.math.argmax(step_result['pred_size_cls'], axis=1)
-
+        elif config['part'] == 'generation':
+            # not using predicted relation
             obj_vecs = self.obj_embedding(objs, training=False)
             pos_pred_vecs = self.pos_pred_embedding(pos_pred, training=False)
 
             result = self.generation(objs, obj_vecs, pos_pred_vecs, boxes, s, o, training=False)
             step_result['pred_boxes'] = tf.convert_to_tensor(result['pred_boxes'])
 
+            # when not training
+            # use the relationship predicted by previous model
+            # pos_pred = tf.math.argmax(step_result['pred_pos_cls'], axis=1)
+            # pos_pred_vecs = self.pos_pred_embedding(pos_pred, training=False)
+            # result = self.generation(objs, obj_vecs, pos_pred_vecs, boxes, s, o, training=False)
+            # step_result['pred_boxes_use_predicted'] = tf.convert_to_tensor(result['pred_boxes'])
 
         # refinement part
-        if training:
+        if training and config['part'] == 'generation':
             with tf.GradientTape() as tape:
                 obj_vecs = self.obj_embedding(objs, training=True)
                 pos_pred_vecs = self.pos_pred_embedding(pos_pred, training=True)
@@ -584,17 +587,21 @@ class NeuralDesignNetwork:
                 zip(gradients, train_var)
             )
 
-
-        else:
-            # when not traing
-            # use the relationship predicted by previous model
-            pos_pred = tf.math.argmax(step_result['pred_pos_cls'], axis=1)
-
+        elif config['part'] == 'generation':
             obj_vecs = self.obj_embedding(objs, training=False)
-            pos_pred_vecs = self.pos_pred_embedding(pos_pred, training=False)
 
+            # not using predicted relation
+            pos_pred_vecs = self.pos_pred_embedding(pos_pred, training=False)
             result = self.refinement(obj_vecs, pos_pred_vecs, step_result['pred_boxes'], s, o, training=False)
             step_result['pred_boxes_refine'] = result['bb_predicted']
+
+            # when not training
+            # use the relationship predicted by previous model
+            # pos_pred = tf.math.argmax(step_result['pred_pos_cls'], axis=1)
+            # pos_pred_vecs = self.pos_pred_embedding(pos_pred, training=False)
+
+            # result = self.refinement(obj_vecs, pos_pred_vecs, step_result['pred_boxes_use_predicted'], s, o, training=False)
+            # step_result['pred_boxes_refine_use_predicted'] = result['bb_predicted']
 
         return step_result
     
