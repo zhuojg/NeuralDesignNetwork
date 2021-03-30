@@ -105,7 +105,7 @@ class NeuralDesignNetwork:
         # here i try to sample some data from N(0, 1)
         # then calculate discrete KL divergence
         # i'm not sure if this is correct
-        KL_loss = self.KL_divergence(mu, var, mu_prior, var_prior)
+        KL_loss = self.KL_divergence(mu, var, 0, 1)
 
         return self.config['lambda_cls'] * cls_loss + self.config['lambda_kl_2'] * KL_loss
 

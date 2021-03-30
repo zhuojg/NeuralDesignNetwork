@@ -91,7 +91,7 @@ class NDNRelation(keras.Model):
 
         # concat 
 
-        new_obj_vecs = self.node_embedding([obj_vecs_with_gt, z])
+        new_obj_vecs = self.node_embedding([obj_vecs, z])
 
         _, new_pred_vecs = self.g_p(new_obj_vecs, pred_vecs, edges, training=training)
 
